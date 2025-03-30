@@ -1,0 +1,39 @@
+{
+  "commonWords": [
+    "React",
+    "Next.js",
+    "Tailwind",
+    "TypeScript",
+    "Perygee",
+    "Justin",
+    "Abhijay",
+    "Teresa",
+    "action runner",
+    "WMS",
+    "bang",
+    "comma",
+    "BitWarden",
+    "1Password",
+    "Deno",
+    "ding",
+    "automation",
+    "Chakra",
+    "SlackBot",
+    "Xero",
+    "Vercel",
+    "Postgraphile"
+  ],
+  "instructions": {
+    "tips": [
+      "The writer says 'bang' to request a newline, replace each instance of 'bang' with a newline character. ONLY insert a newline ('\\n') when the writer explicitly asks for it using the word 'bang'.",
+      "The writer says 'ding' to request a backtick character '`'. Replace each instance of 'ding' with a backtick.",
+      "Be sure to fix any improper spelling or punctuation.",
+      "The writer will sometimes refer to punctuation marks by name, replace them with the actual punctuation marks so the text makes sense.",
+      "All messages should be safe for work. No cursing or explicit content.",
+      "When starting an email, the writer will often start with \"Hi [name],\". Notice that there is no comma after the greeting and only one after the name.",
+      "Emails are often signed off \"Best,\\nJustin\""
+    ],
+    "model": "gpt-4o-mini",
+    "temperature": 0.1
+  }
+}
