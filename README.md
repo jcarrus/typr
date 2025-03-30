@@ -24,17 +24,21 @@ sudo pacman -S alsa-utils pulseaudio-utils xdotool xorg-xinput
 
 ### macOS Requirements
 - `sox` for audio recording
-- `cliclick` for key monitoring
+- [Hammerspoon](https://www.hammerspoon.org/) for key monitoring
 
 ```bash
-brew install sox cliclick
+# Install sox
+brew install sox
+
+# Install Hammerspoon
+brew install --cask hammerspoon
 ```
 
 ## Setup
 
 1. Clone the repository:
 ```bash
-git clone https://github.com/yourusername/typr.git
+git clone https://github.com/jcarrus/typr.git
 cd typr
 ```
 
@@ -48,20 +52,43 @@ echo "OPENAI_API_KEY=your_api_key_here" > .env
 cp config.json config.user.json
 ```
 
-4. Run the program:
+4. Set up Hammerspoon (macOS only):
+```bash
+# Create Hammerspoon config directory if it doesn't exist
+mkdir -p ~/.hammerspoon
+
+# Create symbolic link to the init.lua script
+ln -sf "$(pwd)/init.lua" ~/.hammerspoon/init.lua
+
+# Start Hammerspoon
+open -a Hammerspoon
+```
+
+5. Run the program:
 ```bash
 deno task dev
 ```
 
-## Usage
+## Usage Linux
 
 1. Start the program using `deno task dev`
-2. Double-tap and hold the Shift key to start recording
-3. Speak your text while holding the Shift key
+2. Activate the extension with either a double-tap and hold of the shift key.
+3. Speak your text
 4. Release the Shift key to stop recording
    - The audio will be transcribed
    - The text will be cleaned up and formatted
    - The result will be typed at your current cursor position
+
+## Usage macOS
+
+1. Start the program using `deno task dev`
+2. Press Command + Shift + Space to start recording
+3. Speak your text
+4. Press Command + Shift + Space again to stop recording
+   - The audio will be transcribed
+   - The text will be cleaned up and formatted
+   - The result will be typed at your current cursor position
+5. Press Escape at any time to cancel the current operation
 
 ### Voice Commands
 - Say "bang" to insert a newline
@@ -75,5 +102,8 @@ deno task dev
 - If audio recording fails, check if your microphone is set as the default input device
 
 ### macOS
-- If `cliclick` doesn't work, make sure to grant accessibility permissions in System Preferences > Security & Privacy > Privacy > Accessibility
+- If Hammerspoon doesn't work, make sure to:
+  1. Grant accessibility permissions in System Preferences > Security & Privacy > Privacy > Accessibility
+  2. Check that Hammerspoon is running (look for the hammer icon in your menu bar)
+  3. Reload the Hammerspoon configuration by clicking the hammer icon and selecting "Reload Config"
 - If audio recording fails, check your microphone permissions in System Preferences > Security & Privacy > Privacy > Microphone

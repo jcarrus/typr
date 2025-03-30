@@ -1,3 +1,5 @@
+import { Config } from "./types.ts";
+
 const audioFile = "temp_recording.wav";
 const outputFile = "temp_recording.txt";
 
@@ -10,10 +12,14 @@ if (!OPENAI_API_KEY) {
 }
 
 // Load configurations
-const defaultConfig = JSON.parse(await Deno.readTextFile("config.json"));
-let userConfig = {};
+const defaultConfig = JSON.parse(
+  await Deno.readTextFile("config.json")
+) as Config;
+let userConfig: Partial<Config> = {};
 try {
-  userConfig = JSON.parse(await Deno.readTextFile("config.user.json"));
+  userConfig = JSON.parse(
+    await Deno.readTextFile("config.user.json")
+  ) as Partial<Config>;
 } catch {
   // User config is optional
 }
@@ -108,59 +114,13 @@ const unmuteAudio = async (): Promise<void> => {
 };
 
 let startAt: number | null = null;
-let shouldCancelTyping = false;
+let shouldCancelTyping = { value: false };
 
 const startRecording = async (): Promise<void> => {
   console.log("Started recording...");
   await muteAudio();
   recordingProcess = recordCommand.spawn();
   startAt = Date.now();
-};
-
-const listenForEscape = async (): Promise<void> => {
-  if (isMac) {
-    const escCommand = new Deno.Command("cliclick", {
-      args: ["w"],
-      stdout: "piped",
-    });
-
-    const escProcess = escCommand.spawn();
-    const reader = escProcess.stdout.getReader();
-
-    while (true) {
-      const { value, done } = await reader.read();
-      if (done) return;
-
-      const output = new TextDecoder().decode(value);
-      if (output.includes("k53")) {
-        // Escape key on Mac
-        shouldCancelTyping = true;
-        escProcess.kill();
-        return;
-      }
-    }
-  } else {
-    const escCommand = new Deno.Command("xinput", {
-      args: ["test-xi2", "--root"],
-      stdout: "piped",
-    });
-
-    const escProcess = escCommand.spawn();
-    const reader = escProcess.stdout.getReader();
-
-    while (true) {
-      const { value, done } = await reader.read();
-      if (done) return;
-
-      const output = new TextDecoder().decode(value);
-      if (output.includes("detail: 9")) {
-        // Escape key on Linux
-        shouldCancelTyping = true;
-        escProcess.kill();
-        return;
-      }
-    }
-  }
 };
 
 const stopRecording = async (): Promise<void> => {
@@ -183,7 +143,7 @@ const stopRecording = async (): Promise<void> => {
   await unmuteAudio();
 
   // Reset cancel flag
-  shouldCancelTyping = false;
+  shouldCancelTyping.value = false;
 
   // Wait a bit for the file to be written
   await new Promise((resolve) => setTimeout(resolve, 100));
@@ -225,7 +185,7 @@ const stopRecording = async (): Promise<void> => {
     }
   })();
 
-  if (shouldCancelTyping) {
+  if (shouldCancelTyping.value) {
     console.log("Typing cancelled by user");
     return;
   }
@@ -261,7 +221,7 @@ const stopRecording = async (): Promise<void> => {
 You are a copyeditor. Read the following rough voice transcription and return a copyedited and formatted text.
 
 Tips:
-${config.instructions.tips.map((tip) => `- ${tip}`).join("\n")}
+${config.instructions.tips.map((tip: string) => `- ${tip}`).join("\n")}
 
 Pay close attention to the following commonly used words: ${config.commonWords.join(
               ", "
@@ -293,7 +253,7 @@ Return the rewritten text in a json object with a key "text" and an optional "er
     return JSON.parse(data.choices[0].message.content).text;
   })();
 
-  if (shouldCancelTyping) {
+  if (shouldCancelTyping.value) {
     console.log("Typing cancelled by user");
     return;
   }
@@ -319,82 +279,20 @@ Return the rewritten text in a json object with a key "text" and an optional "er
   );
 };
 
-async function setupKeyListener() {
-  const keyConfig = isMac
-    ? {
-        command: new Deno.Command("cliclick", { args: ["w"], stdout: "piped" }),
-        isShiftKey: (output: string) =>
-          output.includes("k56") || output.includes("k60"),
-        isKeyDown: (output: string) => output.includes("d"),
-        isKeyUp: (output: string) => output.includes("u"),
-        isEscapeKey: (output: string) => output.includes("k53"),
-      }
-    : {
-        command: new Deno.Command("xinput", {
-          args: ["test-xi2", "--root"],
-          stdout: "piped",
-        }),
-        isShiftKey: (output: string) =>
-          output.includes("detail: 50") || output.includes("detail: 62"),
-        isKeyDown: (output: string) => output.includes("RawKeyPress"),
-        isKeyUp: (output: string) => output.includes("RawKeyRelease"),
-        isEscapeKey: (output: string) =>
-          output.includes("detail: 9") && output.includes("RawKeyPress"),
-      };
-
-  const process = keyConfig.command.spawn();
-
-  // Cleanup on process exit
-  Deno.addSignalListener("SIGINT", () => {
-    console.log("SIGINT received, killing process");
-    process.kill();
-  });
-
-  const reader = process.stdout.getReader();
-  let lastShiftPress = 0;
-  let isHolding = false;
-  let lastKeyUpWasShift = false;
-
-  while (true) {
-    const { value, done } = await reader.read();
-    if (done) return;
-
-    const output = new TextDecoder().decode(value);
-    const now = Date.now();
-
-    if (keyConfig.isShiftKey(output)) {
-      if (keyConfig.isKeyDown(output)) {
-        if (now - lastShiftPress < 300 && lastKeyUpWasShift) {
-          isHolding = true;
-          if (!recordingProcess) {
-            startRecording();
-          }
-        }
-        lastShiftPress = now;
-      } else if (keyConfig.isKeyUp(output)) {
-        if (isHolding && recordingProcess) {
-          isHolding = false;
-          stopRecording().catch((error) => {
-            console.error("Error stopping recording", error);
-          });
-        } else if (!isHolding) {
-          lastKeyUpWasShift = true;
-        }
-      }
-    } else if (
-      keyConfig.isEscapeKey(output) &&
-      !recordingProcess &&
-      !isHolding
-    ) {
-      shouldCancelTyping = true;
-    } else {
-      lastKeyUpWasShift = false;
-    }
-  }
-}
-
 // Learn more at https://docs.deno.com/runtime/manual/examples/module_metadata#concepts
 if (import.meta.main) {
   console.log("Starting key listener...");
-  setupKeyListener();
+  if (isMac) {
+    await import("./mac.ts").then((mod) =>
+      mod.setupMacKeyListener(startRecording, stopRecording, shouldCancelTyping)
+    );
+  } else {
+    await import("./linux.ts").then((mod) =>
+      mod.setupLinuxKeyListener(
+        startRecording,
+        stopRecording,
+        shouldCancelTyping
+      )
+    );
+  }
 }
