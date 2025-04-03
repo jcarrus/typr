@@ -9,7 +9,8 @@
       "label": "deno: dev",
       "detail": "$ deno run --watch -A --env-file --no-clear-screen main.ts",
       "runOptions": {
-        "runOn": "folderOpen"
+        "runOn": "folderOpen",
+        "cwd": "${workspaceFolder}/cli"
       }
     }
   ]
