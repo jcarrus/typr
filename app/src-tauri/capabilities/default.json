@@ -17,6 +17,9 @@
     "store:allow-reset",
     "store:allow-save",
     "store:allow-set",
-    "store:allow-values"
+    "store:allow-values",
+    "global-shortcut:allow-is-registered",
+    "global-shortcut:allow-register",
+    "global-shortcut:allow-unregister"
   ]
 }

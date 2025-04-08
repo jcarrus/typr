@@ -10,6 +10,15 @@ fn greet(name: &str) -> String {
     format!("Hello, {}! You've been greeted from Rust!", name)
 }
 
+// Dummy method to activate the app
+fn activate_app(app: &tauri::AppHandle) {
+    println!("Activating app via global shortcut");
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.show();
+        let _ = window.set_focus();
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -32,7 +41,6 @@ pub fn run() {
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
             Some(vec![]), // Optional command line arguments when app starts
         ))
-        .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
             // Create a quit menu item
@@ -43,7 +51,7 @@ pub fn run() {
             let tray = TrayIconBuilder::new()
                 .icon(app.default_window_icon().unwrap().clone())
                 .menu(&menu)
-                .menu_on_left_click(false)
+                .show_menu_on_left_click(false)
                 .on_menu_event(|app, event| match event.id.as_ref() {
                     "quit" => {
                         println!("quit menu item was clicked");
@@ -80,6 +88,45 @@ pub fn run() {
                     }
                 })
                 .build(app)?;
+
+            // Register global shortcut for Cmd+Shift+Space
+            #[cfg(desktop)]
+            {
+                use tauri_plugin_global_shortcut::{
+                    Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState, ShortcutWrapper,
+                };
+
+                let app_handle = app.handle();
+                let cmd_shift_space_shortcut =
+                    Shortcut::new(Some(Modifiers::SHIFT | Modifiers::SUPER), Code::Space);
+                let shortcut_wrapper = ShortcutWrapper::from(cmd_shift_space_shortcut.clone());
+
+                // Initialize the global shortcut plugin
+                app_handle.plugin(
+                    tauri_plugin_global_shortcut::Builder::new()
+                        .with_handler(move |app, shortcut, event| {
+                            println!("in handler");
+                            if shortcut == &cmd_shift_space_shortcut {
+                                match event.state() {
+                                    ShortcutState::Pressed => {
+                                        println!("Cmd+Shift+Space Pressed!");
+                                        activate_app(app);
+                                    }
+                                    ShortcutState::Released => {
+                                        println!("Cmd+Shift+Space Released!");
+                                    }
+                                }
+                            }
+                        })
+                        .build(),
+                )?;
+
+                // Register the shortcut
+                app_handle
+                    .global_shortcut()
+                    .register(cmd_shift_space_shortcut)?;
+            }
+
             Ok(())
         })
         .on_window_event(|window, event| {
