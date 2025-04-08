@@ -22,17 +22,26 @@ Typr is a desktop application that allows users to record audio, transcribe it u
 - [x] Add functionality to list available audio input devices
 - [x] Create UI for starting/stopping recording and displaying results
 
-### Phase 3: Whisper Integration (Planned)
-- [ ] Implement Whisper transcription functionality
-- [ ] Test transcription with recorded audio
-- [ ] Integrate transcription with OpenAI API
+### Phase 3: Whisper Integration (Completed)
+- [x] Implement Whisper transcription functionality
+- [x] Add Whisper model loading and management
+- [x] Integrate audio file processing with Whisper
+- [x] Handle transcription results in the UI
 
-### Phase 4: OpenAI Integration (Planned)
+### Phase 4: Streaming Audio Implementation (Planned)
+- [ ] Implement real-time audio streaming buffer
+- [ ] Add chunked audio processing
+- [ ] Create streaming transcription pipeline
+- [ ] Implement progressive UI updates
+- [ ] Add configurable chunk size and buffer settings
+- [ ] Optimize streaming performance
+
+### Phase 5: OpenAI Integration (Planned)
 - [ ] Implement OpenAI API communication
 - [ ] Process transcriptions with OpenAI
 - [ ] Display OpenAI responses in the UI
 
-### Phase 5: Polish and Refinement (Planned)
+### Phase 6: Polish and Refinement (Planned)
 - [ ] Improve error handling
 - [ ] Add user feedback for recording status
 - [ ] Optimize performance
@@ -46,6 +55,7 @@ Typr is a desktop application that allows users to record audio, transcribe it u
 - **File Handling**: tempfile for temporary files, hound for WAV file handling
 - **Error Handling**: anyhow for error propagation
 - **Logging**: log crate with env_logger
+- **Transcription**: openai api for transcription
 
 ### Frontend (React/TypeScript)
 - **Framework**: React with TypeScript
@@ -73,18 +83,21 @@ Typr is a desktop application that allows users to record audio, transcribe it u
 - Audio recording functionality using cpal
 - Listing available audio input devices
 - UI for starting/stopping recording and displaying results
+- Whisper transcription integration
+- Local model management
 
 ### Known Issues
 - Fixed compilation errors related to Tauri 2.0 state access patterns
-- Need to implement actual Whisper transcription (currently using placeholder)
-- Need to implement OpenAI API integration (currently using placeholder)
+- Need to implement streaming audio processing
+- Need to implement OpenAI API integration
 
 ## Next Steps
-1. Implement Whisper transcription functionality
-2. Test transcription with recorded audio
-3. Integrate transcription with OpenAI API
-4. Improve error handling and user feedback
-5. Add additional settings and customization options
+1. Implement real-time audio streaming buffer
+2. Add chunked audio processing
+3. Create streaming transcription pipeline
+4. Integrate with OpenAI API
+5. Improve error handling and user feedback
+6. Add additional settings and customization options
 
 ## Dependencies
 
@@ -98,6 +111,7 @@ Typr is a desktop application that allows users to record audio, transcribe it u
 - env_logger
 - serde
 - serde_json
+- whisper-rs
 
 ### Frontend (package.json)
 - @tauri-apps/api
@@ -109,5 +123,6 @@ Typr is a desktop application that allows users to record audio, transcribe it u
 ## Notes
 - The application uses Tauri 2.0, which has different state access patterns compared to Tauri 1.x
 - Audio recording is implemented using the cpal library, which provides cross-platform audio capture
-- The application saves recorded audio to temporary WAV files, which are then processed by Whisper
-- OpenAI API integration is planned for future phases 
+- Whisper transcription is handled locally using whisper-rs
+- OpenAI API integration is planned for future phases
+- Streaming audio processing will enable real-time transcription 

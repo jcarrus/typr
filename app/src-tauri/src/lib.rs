@@ -8,9 +8,11 @@ use tauri::{
 // Import our audio processing module
 mod audio_processing;
 use audio_processing::{
-    get_audio_input_devices, is_recording, start_recording, stop_recording_and_process,
-    AudioRecorder,
+    get_audio_input_devices, get_openai_api_key_from_store, is_recording, start_recording,
+    stop_recording_and_process, AudioRecorder,
 };
+
+use std::sync::{Arc, Mutex};
 
 #[tauri::command]
 fn greet(name: &str) -> String {
@@ -40,7 +42,7 @@ pub fn run() {
     env_logger::init();
 
     tauri::Builder::default()
-        .plugin(tauri_plugin_store::Builder::new().build())
+        .plugin(tauri_plugin_store::Builder::default().build())
         .plugin(tauri_plugin_single_instance::init(
             |app_handle, argv, cwd| {
                 println!("app already running: {argv:?}, {cwd}");
@@ -158,13 +160,14 @@ pub fn run() {
                 _ => {}
             }
         })
-        .manage(AudioRecorder::new()) // Register the AudioRecorder state
+        .manage(Arc::new(Mutex::new(AudioRecorder::new()))) // Register the AudioRecorder state wrapped in Arc<Mutex<>>
         .invoke_handler(tauri::generate_handler![
             greet,
             start_recording,
             stop_recording_and_process,
             is_recording,
-            get_audio_input_devices
+            get_audio_input_devices,
+            get_openai_api_key_from_store,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

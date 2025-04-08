@@ -29,9 +29,10 @@ cpal = "0.15.2"
 hound = "3.5.1"  # For WAV file handling
 anyhow = "1.0.79"  # For error handling
 # OpenAI API dependencies
-reqwest = { version = "0.11.22", features = ["json", "stream"] }
+reqwest = { version = "0.11.22", features = ["json", "stream", "multipart"] }
 tokio = { version = "1.32.0", features = ["full"] }
 base64 = "0.21.7"  # For encoding audio data
+bytes = "1.5.0"  # For handling binary data
 futures-util = "0.3.30"  # For async stream handling
 # Utility dependencies
 tempfile = "3.8.1"  # For temporary file handling

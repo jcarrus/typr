@@ -1,5 +1,6 @@
 use anyhow::{Context, Result};
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
+use bytes::Bytes;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{Sample, SampleFormat};
 use dirs::data_dir;
@@ -15,6 +16,8 @@ use std::io::Write;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use tauri::Manager;
+use tauri_plugin_store::Store;
+use tauri_plugin_store::StoreExt;
 use tempfile::NamedTempFile;
 
 // Struct to hold audio device information
@@ -110,7 +113,44 @@ impl AudioRecorder {
                 err_fn,
                 None,
             ),
-            _ => return Err("Unsupported sample format".to_string()),
+            SampleFormat::F32 => device.build_input_stream(
+                &config.into(),
+                move |data: &[f32], _: &_| {
+                    if let Ok(mut writer) = writer_clone.lock() {
+                        for &sample in data {
+                            // Convert f32 to i16
+                            let sample_i16 = (sample * 32767.0) as i16;
+                            writer.write_sample(sample_i16).unwrap_or_else(|e| {
+                                error!("Error writing sample: {}", e);
+                            });
+                        }
+                    }
+                },
+                err_fn,
+                None,
+            ),
+            SampleFormat::U16 => device.build_input_stream(
+                &config.into(),
+                move |data: &[u16], _: &_| {
+                    if let Ok(mut writer) = writer_clone.lock() {
+                        for &sample in data {
+                            // Convert u16 to i16
+                            let sample_i16 = (sample as i32 - 32768) as i16;
+                            writer.write_sample(sample_i16).unwrap_or_else(|e| {
+                                error!("Error writing sample: {}", e);
+                            });
+                        }
+                    }
+                },
+                err_fn,
+                None,
+            ),
+            _ => {
+                return Err(format!(
+                    "Unsupported sample format: {:?}",
+                    config.sample_format()
+                ))
+            }
         }
         .map_err(|e| e.to_string())?;
 
@@ -164,51 +204,83 @@ impl AudioRecorder {
 }
 
 // Function to process audio with GPT-4o-mini
-pub async fn process_audio_with_gpt4o(audio_path: &str) -> Result<String> {
+pub async fn process_audio_with_gpt4o(
+    audio_path: &str,
+    app_handle: &tauri::AppHandle,
+) -> Result<String> {
     info!("Processing audio with GPT-4o-mini: {}", audio_path);
 
     // Read the audio file
     let audio_data = fs::read(audio_path)?;
+    info!("Read audio file: {} bytes", audio_data.len());
 
-    // Encode the audio data as base64
-    let audio_base64 = BASE64.encode(&audio_data);
+    // Get the OpenAI API key from the store
+    let api_key = match get_openai_api_key_from_store(app_handle.clone()).await {
+        Ok(key) => key,
+        Err(e) => {
+            error!("Failed to get OpenAI API key: {}", e);
+            return Err(anyhow::anyhow!(
+                "OpenAI API key not found. Please add your API key in the settings."
+            ));
+        }
+    };
+    info!("Retrieved OpenAI API key");
 
-    // Get the OpenAI API key from the app state
-    let api_key = get_openai_api_key()?;
-
-    // Create the request to OpenAI
+    // Create a multipart form for the request
     let client = reqwest::Client::new();
+
+    // Create a temporary file for the request
+    let temp_file = tempfile::NamedTempFile::new()?;
+    fs::write(temp_file.path(), &audio_data)?;
+    info!(
+        "Created temporary file for API request: {:?}",
+        temp_file.path()
+    );
+
+    // Create the form
+    let file_bytes = fs::read(temp_file.path())?;
+    let form = reqwest::multipart::Form::new()
+        .text("model", "whisper-1")
+        .text("response_format", "text")
+        .text("language", "en")
+        .text("temperature", "0.2")
+        .text("prompt", "You are a helpful assistant that transcribes speech to text. If you detect a command in the speech (like 'rewrite this' or 'make this more formal'), interpret it and apply it to the transcription. Otherwise, just transcribe the speech accurately.")
+        .part(
+            "file",
+            reqwest::multipart::Part::bytes(file_bytes)
+                .file_name("audio.wav")
+                .mime_str("audio/wav")?
+        );
+
+    info!("Sending request to OpenAI API...");
+
+    // Send the request
     let response = client
         .post("https://api.openai.com/v1/audio/transcriptions")
         .header("Authorization", format!("Bearer {}", api_key))
-        .json(&serde_json::json!({
-            "model": "gpt-4o-mini",
-            "file": audio_base64,
-            "response_format": "text",
-            "language": "en",
-            "temperature": 0.2,
-            "prompt": "You are a helpful assistant that transcribes speech to text. If you detect a command in the speech (like 'rewrite this' or 'make this more formal'), interpret it and apply it to the transcription. Otherwise, just transcribe the speech accurately."
-        }))
+        .multipart(form)
         .send()
         .await?;
+
+    info!("Received response from OpenAI API: {:?}", response.status());
 
     // Check if the request was successful
     if !response.status().is_success() {
         let error_text = response.text().await?;
+        error!("OpenAI API error: {}", error_text);
         return Err(anyhow::anyhow!("OpenAI API error: {}", error_text));
     }
 
     // Get the transcription
     let transcription = response.text().await?;
-
     info!("Transcription completed: {}", transcription);
     Ok(transcription)
 }
 
 // Helper function to get the OpenAI API key
 fn get_openai_api_key() -> Result<String> {
-    // In a real application, you would get this from your app's state or configuration
-    // For now, we'll use an environment variable
+    // For now, we'll use an environment variable as a fallback
+    // In a real implementation, we would get this from the app's state
     std::env::var("OPENAI_API_KEY").map_err(|e| anyhow::anyhow!("OpenAI API key not found: {}", e))
 }
 
@@ -274,9 +346,19 @@ pub async fn stop_recording_and_process(
         .to_string();
 
     // Process the audio with GPT-4o-mini
-    let transcription = process_audio_with_gpt4o(&audio_path_str)
-        .await
-        .map_err(|e| e.to_string())?;
+    let transcription = match process_audio_with_gpt4o(&audio_path_str, &app_handle).await {
+        Ok(text) => text,
+        Err(e) => {
+            // Check if the error is related to the API key
+            if e.to_string().contains("API key not found") {
+                return Err(
+                    "OpenAI API key not found. Please add your API key in the settings."
+                        .to_string(),
+                );
+            }
+            return Err(format!("Failed to process audio: {}", e));
+        }
+    };
 
     // Return the result
     Ok(AudioProcessingResult {
@@ -300,4 +382,30 @@ pub fn is_recording(app_handle: tauri::AppHandle) -> bool {
 #[tauri::command]
 pub fn get_audio_input_devices() -> Result<Vec<AudioDevice>, String> {
     list_audio_input_devices().map_err(|e| e.to_string())
+}
+
+// Tauri command to get the OpenAI API key from the store
+#[tauri::command]
+pub async fn get_openai_api_key_from_store(app_handle: tauri::AppHandle) -> Result<String, String> {
+    // Get the store from the app handle using the StoreExt trait
+    let store = app_handle
+        .store(".settings.dat")
+        .map_err(|e| format!("Failed to load store: {}", e))?;
+
+    // Get the API key from the store
+    let api_key = store
+        .get("openAIKey")
+        .ok_or_else(|| "OpenAI API key not found in store".to_string())?;
+
+    // Convert the serde_json::Value to a String
+    let api_key_str = api_key
+        .as_str()
+        .ok_or_else(|| "API key is not a string".to_string())?
+        .to_string();
+
+    if api_key_str.is_empty() {
+        return Err("OpenAI API key is empty".to_string());
+    }
+
+    Ok(api_key_str)
 }
