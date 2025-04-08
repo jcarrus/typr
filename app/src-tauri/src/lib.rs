@@ -8,33 +8,11 @@ use tauri::{
 // Import our audio processing module
 mod audio_processing;
 use audio_processing::{
-    get_audio_input_devices, get_openai_api_key_from_store, is_recording, start_recording,
-    stop_recording_and_process, AudioRecorder,
+    get_audio_input_devices, get_custom_settings_from_store, get_openai_api_key_from_store,
+    is_recording, start_recording, stop_recording_and_process, AudioRecorder,
 };
 
 use std::sync::{Arc, Mutex};
-
-#[tauri::command]
-fn greet(name: &str) -> String {
-    format!("Hello, {}! You've been greeted from Rust!", name)
-}
-
-// When activated, this function will start recording from the microphone. Data will be sent to a subprocess that's running the `whisper` command. The output will then be processed by the OpenAI API.
-fn activate_app(app: &tauri::AppHandle) {
-    println!("Activating app via global shortcut");
-
-    // Start recording audio
-    if let Err(e) = start_recording(app.clone()) {
-        println!("Failed to start recording: {}", e);
-        return;
-    }
-
-    // Show the main window
-    if let Some(window) = app.get_webview_window("main") {
-        let _ = window.show();
-        let _ = window.set_focus();
-    }
-}
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -68,13 +46,13 @@ pub fn run() {
             let menu = Menu::with_items(app, &[&quit_i])?;
 
             // Create the tray icon with menu
-            let tray = TrayIconBuilder::new()
+            let _tray = TrayIconBuilder::new()
                 .icon(app.default_window_icon().unwrap().clone())
                 .menu(&menu)
                 .show_menu_on_left_click(false) // Don't show menu on left click
                 .on_menu_event(|app, event| match event.id.as_ref() {
                     "quit" => {
-                        println!("quit menu item was clicked");
+                        println!("Quitting...");
                         app.exit(0);
                     }
                     _ => {
@@ -119,7 +97,6 @@ pub fn run() {
                 let app_handle = app.handle();
                 let cmd_shift_space_shortcut =
                     Shortcut::new(Some(Modifiers::SHIFT | Modifiers::SUPER), Code::Space);
-                let shortcut_wrapper = ShortcutWrapper::from(cmd_shift_space_shortcut.clone());
 
                 // Initialize the global shortcut plugin
                 app_handle.plugin(
@@ -130,10 +107,23 @@ pub fn run() {
                                 match event.state() {
                                     ShortcutState::Pressed => {
                                         println!("Cmd+Shift+Space Pressed!");
-                                        activate_app(app);
+                                        // Start recording audio
+                                        if let Err(e) = start_recording(app.clone()) {
+                                            println!("Failed to start recording: {}", e);
+                                            return;
+                                        }
                                     }
                                     ShortcutState::Released => {
                                         println!("Cmd+Shift+Space Released!");
+                                        // Stop recording audio
+                                        let app_clone = app.clone();
+                                        tauri::async_runtime::spawn(async move {
+                                            if let Err(e) =
+                                                stop_recording_and_process(app_clone).await
+                                            {
+                                                println!("Failed to stop recording: {}", e);
+                                            }
+                                        });
                                     }
                                 }
                             }
@@ -162,12 +152,10 @@ pub fn run() {
         })
         .manage(Arc::new(Mutex::new(AudioRecorder::new()))) // Register the AudioRecorder state wrapped in Arc<Mutex<>>
         .invoke_handler(tauri::generate_handler![
-            greet,
-            start_recording,
-            stop_recording_and_process,
             is_recording,
             get_audio_input_devices,
             get_openai_api_key_from_store,
+            get_custom_settings_from_store,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

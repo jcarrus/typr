@@ -13,10 +13,6 @@ function App() {
   const [error, setError] = useState<string | null>(null);
 
   // Audio recording state
-  const [isRecording, setIsRecording] = useState(false);
-  const [transcription, setTranscription] = useState("");
-  const [openaiResponse, setOpenaiResponse] = useState("");
-  const [isProcessing, setIsProcessing] = useState(false);
   const [audioDevices, setAudioDevices] = useState<
     Array<{ name: string; id: string }>
   >([]);
@@ -118,63 +114,6 @@ function App() {
     loadSettings();
   }, [loadSettings]);
 
-  // Check recording status periodically
-  useEffect(() => {
-    const checkRecordingStatus = async () => {
-      try {
-        const status = await invoke<boolean>("is_recording");
-        setIsRecording(status);
-      } catch (error) {
-        console.error("Failed to check recording status:", error);
-      }
-    };
-
-    const interval = setInterval(checkRecordingStatus, 1000);
-    return () => clearInterval(interval);
-  }, []);
-
-  // Handle start recording
-  const handleStartRecording = async () => {
-    try {
-      await invoke("start_recording");
-      setIsRecording(true);
-      setError(null);
-    } catch (error) {
-      console.error("Failed to start recording:", error);
-      setError(
-        `Failed to start recording: ${
-          error instanceof Error ? error.message : String(error)
-        }`
-      );
-    }
-  };
-
-  // Handle stop recording and process
-  const handleStopRecording = async () => {
-    try {
-      setIsProcessing(true);
-      setError(null);
-
-      const result = await invoke<{
-        transcription: string;
-        openai_response: string;
-      }>("stop_recording_and_process");
-
-      setTranscription(result.transcription);
-      setOpenaiResponse(result.openai_response);
-      setIsRecording(false);
-    } catch (error) {
-      console.error("Failed to stop recording:", error);
-      setError(
-        `Failed to stop recording: ${
-          error instanceof Error ? error.message : String(error)
-        }`
-      );
-    } finally {
-      setIsProcessing(false);
-    }
-  };
-
   // Handle listing audio input devices
   const handleListAudioDevices = async () => {
     try {
@@ -250,17 +189,6 @@ function App() {
 
           <div className="flex gap-4 mt-4">
             <button
-              className={`btn ${isRecording ? "btn-error" : "btn-primary"}`}
-              onClick={isRecording ? handleStopRecording : handleStartRecording}
-              disabled={isProcessing}
-            >
-              {isRecording ? "Stop Recording" : "Start Recording"}
-              {isRecording && (
-                <span className="loading loading-spinner loading-xs ml-2"></span>
-              )}
-            </button>
-
-            <button
               className="btn btn-outline"
               onClick={handleListAudioDevices}
               disabled={isLoadingDevices}
@@ -271,13 +199,6 @@ function App() {
                 "List Audio Devices"
               )}
             </button>
-
-            {isProcessing && (
-              <div className="flex items-center">
-                <span className="loading loading-spinner loading-md mr-2"></span>
-                <span>Processing audio...</span>
-              </div>
-            )}
           </div>
 
           {audioDevices.length > 0 && (
@@ -300,24 +221,6 @@ function App() {
                     ))}
                   </tbody>
                 </table>
-              </div>
-            </div>
-          )}
-
-          {transcription && (
-            <div className="mt-4">
-              <h3 className="font-medium">Transcription:</h3>
-              <div className="p-4 bg-base-300 rounded-lg mt-2">
-                {transcription}
-              </div>
-            </div>
-          )}
-
-          {openaiResponse && (
-            <div className="mt-4">
-              <h3 className="font-medium">OpenAI Response:</h3>
-              <div className="p-4 bg-base-300 rounded-lg mt-2">
-                {openaiResponse}
               </div>
             </div>
           )}

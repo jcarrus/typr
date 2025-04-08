@@ -226,6 +226,17 @@ pub async fn process_audio_with_gpt4o(
     };
     info!("Retrieved OpenAI API key");
 
+    // Get custom vocabulary and instructions from the store
+    let (custom_vocabulary, custom_instructions) =
+        match get_custom_settings_from_store(app_handle.clone()).await {
+            Ok(settings) => settings,
+            Err(e) => {
+                error!("Failed to get custom settings: {}", e);
+                (String::new(), String::new())
+            }
+        };
+    info!("Retrieved custom settings");
+
     // Create a multipart form for the request
     let client = reqwest::Client::new();
 
@@ -237,6 +248,30 @@ pub async fn process_audio_with_gpt4o(
         temp_file.path()
     );
 
+    // Build the prompt with custom vocabulary and instructions
+    let mut prompt = String::from("You are a helpful assistant that transcribes speech to text. If you detect a command in the speech (like 'rewrite this' or 'make this more formal'), interpret it and apply it to the transcription. Otherwise, just transcribe the speech accurately.");
+
+    // Add custom vocabulary if available
+    if !custom_vocabulary.is_empty() {
+        let vocabulary_list: Vec<&str> = custom_vocabulary
+            .lines()
+            .filter(|line| !line.trim().is_empty())
+            .collect();
+
+        if !vocabulary_list.is_empty() {
+            prompt.push_str("\n\nCommon words and phrases to recognize: ");
+            prompt.push_str(&vocabulary_list.join(", "));
+        }
+    }
+
+    // Add custom instructions if available
+    if !custom_instructions.is_empty() {
+        prompt.push_str("\n\nAdditional instructions: ");
+        prompt.push_str(&custom_instructions);
+    }
+
+    info!("Using prompt: {}", prompt);
+
     // Create the form
     let file_bytes = fs::read(temp_file.path())?;
     let form = reqwest::multipart::Form::new()
@@ -244,12 +279,12 @@ pub async fn process_audio_with_gpt4o(
         .text("response_format", "text")
         .text("language", "en")
         .text("temperature", "0.2")
-        .text("prompt", "You are a helpful assistant that transcribes speech to text. If you detect a command in the speech (like 'rewrite this' or 'make this more formal'), interpret it and apply it to the transcription. Otherwise, just transcribe the speech accurately.")
+        .text("prompt", prompt)
         .part(
             "file",
             reqwest::multipart::Part::bytes(file_bytes)
                 .file_name("audio.wav")
-                .mime_str("audio/wav")?
+                .mime_str("audio/wav")?,
         );
 
     info!("Sending request to OpenAI API...");
@@ -408,4 +443,29 @@ pub async fn get_openai_api_key_from_store(app_handle: tauri::AppHandle) -> Resu
     }
 
     Ok(api_key_str)
+}
+
+// Tauri command to get custom vocabulary and instructions from the store
+#[tauri::command]
+pub async fn get_custom_settings_from_store(
+    app_handle: tauri::AppHandle,
+) -> Result<(String, String), String> {
+    // Get the store from the app handle using the StoreExt trait
+    let store = app_handle
+        .store(".settings.dat")
+        .map_err(|e| format!("Failed to load store: {}", e))?;
+
+    // Get the custom vocabulary from the store
+    let custom_vocabulary = store
+        .get("customVocabulary")
+        .map(|v| v.as_str().unwrap_or("").to_string())
+        .unwrap_or_default();
+
+    // Get the custom instructions from the store
+    let custom_instructions = store
+        .get("customInstructions")
+        .map(|v| v.as_str().unwrap_or("").to_string())
+        .unwrap_or_default();
+
+    Ok((custom_vocabulary, custom_instructions))
 }

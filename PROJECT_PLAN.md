@@ -28,7 +28,13 @@ Typr is a desktop application that allows users to record audio, transcribe it u
 - [x] Integrate audio file processing with Whisper
 - [x] Handle transcription results in the UI
 
-### Phase 4: Streaming Audio Implementation (Planned)
+### Phase 4: OpenAI Integration (Completed)
+- [x] Implement OpenAI API communication
+- [x] Process transcriptions with OpenAI
+- [x] Display OpenAI responses in the UI
+- [x] Add error handling for API key management
+
+### Phase 5: Streaming Audio Implementation (Planned)
 - [ ] Implement real-time audio streaming buffer
 - [ ] Add chunked audio processing
 - [ ] Create streaming transcription pipeline
@@ -36,16 +42,14 @@ Typr is a desktop application that allows users to record audio, transcribe it u
 - [ ] Add configurable chunk size and buffer settings
 - [ ] Optimize streaming performance
 
-### Phase 5: OpenAI Integration (Planned)
-- [ ] Implement OpenAI API communication
-- [ ] Process transcriptions with OpenAI
-- [ ] Display OpenAI responses in the UI
-
 ### Phase 6: Polish and Refinement (Planned)
 - [ ] Improve error handling
 - [ ] Add user feedback for recording status
 - [ ] Optimize performance
 - [ ] Add additional settings and customization options
+- [ ] Implement proper cleanup of temporary files
+- [ ] Add support for different audio formats
+- [ ] Improve logging and debugging capabilities
 
 ## Technical Details
 
@@ -55,7 +59,8 @@ Typr is a desktop application that allows users to record audio, transcribe it u
 - **File Handling**: tempfile for temporary files, hound for WAV file handling
 - **Error Handling**: anyhow for error propagation
 - **Logging**: log crate with env_logger
-- **Transcription**: openai api for transcription
+- **Transcription**: OpenAI API for transcription
+- **HTTP Client**: reqwest with multipart support
 
 ### Frontend (React/TypeScript)
 - **Framework**: React with TypeScript
@@ -83,21 +88,25 @@ Typr is a desktop application that allows users to record audio, transcribe it u
 - Audio recording functionality using cpal
 - Listing available audio input devices
 - UI for starting/stopping recording and displaying results
-- Whisper transcription integration
+- OpenAI API integration for transcription
 - Local model management
+- Error handling for API key management
+- Multipart form handling for file uploads
 
 ### Known Issues
-- Fixed compilation errors related to Tauri 2.0 state access patterns
+- Need to implement proper cleanup of temporary files
+- Need to add retry mechanism for failed API requests
 - Need to implement streaming audio processing
-- Need to implement OpenAI API integration
+- Need to add support for different OpenAI models
 
 ## Next Steps
-1. Implement real-time audio streaming buffer
-2. Add chunked audio processing
-3. Create streaming transcription pipeline
-4. Integrate with OpenAI API
-5. Improve error handling and user feedback
-6. Add additional settings and customization options
+1. Implement retry mechanism for failed API requests
+2. Add rate limiting and quota management for OpenAI API
+3. Implement proper cleanup of temporary files
+4. Add support for different OpenAI models
+5. Begin work on streaming audio implementation
+6. Improve error handling and user feedback
+7. Add additional settings and customization options
 
 ## Dependencies
 
@@ -111,7 +120,11 @@ Typr is a desktop application that allows users to record audio, transcribe it u
 - env_logger
 - serde
 - serde_json
-- whisper-rs
+- reqwest (with multipart feature)
+- bytes
+- tokio
+- base64
+- futures-util
 
 ### Frontend (package.json)
 - @tauri-apps/api
@@ -123,6 +136,5 @@ Typr is a desktop application that allows users to record audio, transcribe it u
 ## Notes
 - The application uses Tauri 2.0, which has different state access patterns compared to Tauri 1.x
 - Audio recording is implemented using the cpal library, which provides cross-platform audio capture
-- Whisper transcription is handled locally using whisper-rs
-- OpenAI API integration is planned for future phases
+- OpenAI API integration is now working with proper multipart form handling
 - Streaming audio processing will enable real-time transcription 
