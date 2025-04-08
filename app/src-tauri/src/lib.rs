@@ -5,14 +5,29 @@ use tauri::{
     Manager,
 };
 
+// Import our audio processing module
+mod audio_processing;
+use audio_processing::{
+    get_audio_input_devices, is_recording, start_recording, stop_recording_and_process,
+    AudioRecorder,
+};
+
 #[tauri::command]
 fn greet(name: &str) -> String {
     format!("Hello, {}! You've been greeted from Rust!", name)
 }
 
-// Dummy method to activate the app
+// When activated, this function will start recording from the microphone. Data will be sent to a subprocess that's running the `whisper` command. The output will then be processed by the OpenAI API.
 fn activate_app(app: &tauri::AppHandle) {
     println!("Activating app via global shortcut");
+
+    // Start recording audio
+    if let Err(e) = start_recording(app.clone()) {
+        println!("Failed to start recording: {}", e);
+        return;
+    }
+
+    // Show the main window
     if let Some(window) = app.get_webview_window("main") {
         let _ = window.show();
         let _ = window.set_focus();
@@ -21,6 +36,9 @@ fn activate_app(app: &tauri::AppHandle) {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Initialize logging
+    env_logger::init();
+
     tauri::Builder::default()
         .plugin(tauri_plugin_store::Builder::new().build())
         .plugin(tauri_plugin_single_instance::init(
@@ -51,7 +69,7 @@ pub fn run() {
             let tray = TrayIconBuilder::new()
                 .icon(app.default_window_icon().unwrap().clone())
                 .menu(&menu)
-                .show_menu_on_left_click(false)
+                .show_menu_on_left_click(false) // Don't show menu on left click
                 .on_menu_event(|app, event| match event.id.as_ref() {
                     "quit" => {
                         println!("quit menu item was clicked");
@@ -140,7 +158,14 @@ pub fn run() {
                 _ => {}
             }
         })
-        .invoke_handler(tauri::generate_handler![greet])
+        .manage(AudioRecorder::new()) // Register the AudioRecorder state
+        .invoke_handler(tauri::generate_handler![
+            greet,
+            start_recording,
+            stop_recording_and_process,
+            is_recording,
+            get_audio_input_devices
+        ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

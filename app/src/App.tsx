@@ -12,6 +12,16 @@ function App() {
   const [store, setStore] = useState<Store | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  // Audio recording state
+  const [isRecording, setIsRecording] = useState(false);
+  const [transcription, setTranscription] = useState("");
+  const [openaiResponse, setOpenaiResponse] = useState("");
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [audioDevices, setAudioDevices] = useState<
+    Array<{ name: string; id: string }>
+  >([]);
+  const [isLoadingDevices, setIsLoadingDevices] = useState(false);
+
   // Load settings from store
   const loadSettings = useCallback(async () => {
     try {
@@ -108,6 +118,85 @@ function App() {
     loadSettings();
   }, [loadSettings]);
 
+  // Check recording status periodically
+  useEffect(() => {
+    const checkRecordingStatus = async () => {
+      try {
+        const status = await invoke<boolean>("is_recording");
+        setIsRecording(status);
+      } catch (error) {
+        console.error("Failed to check recording status:", error);
+      }
+    };
+
+    const interval = setInterval(checkRecordingStatus, 1000);
+    return () => clearInterval(interval);
+  }, []);
+
+  // Handle start recording
+  const handleStartRecording = async () => {
+    try {
+      await invoke("start_recording");
+      setIsRecording(true);
+      setError(null);
+    } catch (error) {
+      console.error("Failed to start recording:", error);
+      setError(
+        `Failed to start recording: ${
+          error instanceof Error ? error.message : String(error)
+        }`
+      );
+    }
+  };
+
+  // Handle stop recording and process
+  const handleStopRecording = async () => {
+    try {
+      setIsProcessing(true);
+      setError(null);
+
+      const result = await invoke<{
+        transcription: string;
+        openai_response: string;
+      }>("stop_recording_and_process");
+
+      setTranscription(result.transcription);
+      setOpenaiResponse(result.openai_response);
+      setIsRecording(false);
+    } catch (error) {
+      console.error("Failed to stop recording:", error);
+      setError(
+        `Failed to stop recording: ${
+          error instanceof Error ? error.message : String(error)
+        }`
+      );
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  // Handle listing audio input devices
+  const handleListAudioDevices = async () => {
+    try {
+      setIsLoadingDevices(true);
+      setError(null);
+
+      const devices = await invoke<Array<{ name: string; id: string }>>(
+        "get_audio_input_devices"
+      );
+      setAudioDevices(devices);
+    } catch (error) {
+      console.error("Failed to list audio devices:", error);
+      setError(
+        `Failed to list audio devices: ${
+          error instanceof Error ? error.message : String(error)
+        }`
+      );
+    } finally {
+      setIsLoadingDevices(false);
+    }
+  };
+
   return (
     <div className="container mx-auto p-4 max-w-3xl relative">
       {isSaved && (
@@ -148,7 +237,95 @@ function App() {
         </div>
       )}
 
-      <h1 className="text-2xl font-bold mb-6">Dictation App Settings</h1>
+      <h1 className="text-2xl font-bold mb-6">Dictation App</h1>
+
+      {/* Audio Recording Controls */}
+      <div className="card bg-base-200 shadow-xl mb-6">
+        <div className="card-body">
+          <h2 className="card-title">Audio Recording</h2>
+          <p>
+            Use the global shortcut (Cmd+Shift+Space) or the buttons below to
+            record audio.
+          </p>
+
+          <div className="flex gap-4 mt-4">
+            <button
+              className={`btn ${isRecording ? "btn-error" : "btn-primary"}`}
+              onClick={isRecording ? handleStopRecording : handleStartRecording}
+              disabled={isProcessing}
+            >
+              {isRecording ? "Stop Recording" : "Start Recording"}
+              {isRecording && (
+                <span className="loading loading-spinner loading-xs ml-2"></span>
+              )}
+            </button>
+
+            <button
+              className="btn btn-outline"
+              onClick={handleListAudioDevices}
+              disabled={isLoadingDevices}
+            >
+              {isLoadingDevices ? (
+                <span className="loading loading-spinner loading-xs mr-2"></span>
+              ) : (
+                "List Audio Devices"
+              )}
+            </button>
+
+            {isProcessing && (
+              <div className="flex items-center">
+                <span className="loading loading-spinner loading-md mr-2"></span>
+                <span>Processing audio...</span>
+              </div>
+            )}
+          </div>
+
+          {audioDevices.length > 0 && (
+            <div className="mt-4">
+              <h3 className="font-medium">Available Audio Input Devices:</h3>
+              <div className="overflow-x-auto mt-2">
+                <table className="table table-zebra w-full">
+                  <thead>
+                    <tr>
+                      <th>ID</th>
+                      <th>Name</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {audioDevices.map((device) => (
+                      <tr key={device.id}>
+                        <td>{device.id}</td>
+                        <td>{device.name}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {transcription && (
+            <div className="mt-4">
+              <h3 className="font-medium">Transcription:</h3>
+              <div className="p-4 bg-base-300 rounded-lg mt-2">
+                {transcription}
+              </div>
+            </div>
+          )}
+
+          {openaiResponse && (
+            <div className="mt-4">
+              <h3 className="font-medium">OpenAI Response:</h3>
+              <div className="p-4 bg-base-300 rounded-lg mt-2">
+                {openaiResponse}
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Settings Section */}
+      <h2 className="text-xl font-bold mb-4">Settings</h2>
 
       {isLoading ? (
         <div className="flex justify-center items-center h-64">
