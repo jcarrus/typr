@@ -1,5 +1,4 @@
 import { useState, useEffect, useCallback } from "react";
-import { invoke } from "@tauri-apps/api/core";
 import { Store } from "@tauri-apps/plugin-store";
 import "./App.css";
 
@@ -11,12 +10,6 @@ function App() {
   const [isLoading, setIsLoading] = useState(true);
   const [store, setStore] = useState<Store | null>(null);
   const [error, setError] = useState<string | null>(null);
-
-  // Audio recording state
-  const [audioDevices, setAudioDevices] = useState<
-    Array<{ name: string; id: string }>
-  >([]);
-  const [isLoadingDevices, setIsLoadingDevices] = useState(false);
 
   // Load settings from store
   const loadSettings = useCallback(async () => {
@@ -114,28 +107,6 @@ function App() {
     loadSettings();
   }, [loadSettings]);
 
-  // Handle listing audio input devices
-  const handleListAudioDevices = async () => {
-    try {
-      setIsLoadingDevices(true);
-      setError(null);
-
-      const devices = await invoke<Array<{ name: string; id: string }>>(
-        "get_audio_input_devices"
-      );
-      setAudioDevices(devices);
-    } catch (error) {
-      console.error("Failed to list audio devices:", error);
-      setError(
-        `Failed to list audio devices: ${
-          error instanceof Error ? error.message : String(error)
-        }`
-      );
-    } finally {
-      setIsLoadingDevices(false);
-    }
-  };
-
   return (
     <div className="container mx-auto p-4 max-w-3xl relative">
       {isSaved && (
@@ -176,59 +147,17 @@ function App() {
         </div>
       )}
 
-      <h1 className="text-2xl font-bold mb-6">Dictation App</h1>
-
-      {/* Audio Recording Controls */}
-      <div className="card bg-base-200 shadow-xl mb-6">
-        <div className="card-body">
-          <h2 className="card-title">Audio Recording</h2>
-          <p>
-            Use the global shortcut (Cmd+Shift+Space) or the buttons below to
-            record audio.
-          </p>
-
-          <div className="flex gap-4 mt-4">
-            <button
-              className="btn btn-outline"
-              onClick={handleListAudioDevices}
-              disabled={isLoadingDevices}
-            >
-              {isLoadingDevices ? (
-                <span className="loading loading-spinner loading-xs mr-2"></span>
-              ) : (
-                "List Audio Devices"
-              )}
-            </button>
-          </div>
-
-          {audioDevices.length > 0 && (
-            <div className="mt-4">
-              <h3 className="font-medium">Available Audio Input Devices:</h3>
-              <div className="overflow-x-auto mt-2">
-                <table className="table table-zebra w-full">
-                  <thead>
-                    <tr>
-                      <th>ID</th>
-                      <th>Name</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {audioDevices.map((device) => (
-                      <tr key={device.id}>
-                        <td>{device.id}</td>
-                        <td>{device.name}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          )}
-        </div>
-      </div>
+      <h1 className="text-2xl font-bold mb-6">Typr</h1>
 
       {/* Settings Section */}
       <h2 className="text-xl font-bold mb-4">Settings</h2>
+
+      <div className="mb-6">
+        Start dictating by pressing CMD+SHIFT+SPACE. Release to stop. The
+        application will automatically transcribe your speech to text and then
+        type wherever your cursor is. Experiment with adding custom vocabulary
+        and instructions to customize the output to your liking.
+      </div>
 
       {isLoading ? (
         <div className="flex justify-center items-center h-64">

@@ -1,22 +1,15 @@
-use anyhow::{Context, Result};
-use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
-use bytes::Bytes;
+use anyhow::Result;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-use cpal::{Sample, SampleFormat};
-use dirs::data_dir;
-use futures_util::StreamExt;
+use cpal::SampleFormat;
 use hound::{WavSpec, WavWriter};
-use indicatif::{ProgressBar, ProgressStyle};
-use log::{debug, error, info};
+use log::{error, info};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::fs::File;
 use std::io::BufWriter;
-use std::io::Write;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use tauri::Manager;
-use tauri_plugin_store::Store;
 use tauri_plugin_store::StoreExt;
 use tempfile::NamedTempFile;
 
@@ -30,8 +23,8 @@ pub struct AudioDevice {
 // Struct to hold the result of audio processing
 #[derive(Debug, Serialize, Deserialize)]
 pub struct AudioProcessingResult {
-    transcription: String,
-    openai_response: String,
+    pub transcription: String,
+    pub openai_response: String,
 }
 
 // Struct to hold the state of our audio recording
@@ -227,7 +220,7 @@ pub async fn process_audio_with_gpt4o(
     info!("Retrieved OpenAI API key");
 
     // Get custom vocabulary and instructions from the store
-    let (custom_vocabulary, custom_instructions) =
+    let (custom_vocabulary, _custom_instructions) =
         match get_custom_settings_from_store(app_handle.clone()).await {
             Ok(settings) => settings,
             Err(e) => {
@@ -249,7 +242,7 @@ pub async fn process_audio_with_gpt4o(
     );
 
     // Build the prompt with custom vocabulary and instructions
-    let mut prompt = String::from("You are a helpful assistant that transcribes speech to text. If you detect a command in the speech (like 'rewrite this' or 'make this more formal'), interpret it and apply it to the transcription. Otherwise, just transcribe the speech accurately.");
+    let mut prompt = String::from("Here is a dictation of spoken text.");
 
     // Add custom vocabulary if available
     if !custom_vocabulary.is_empty() {
@@ -264,13 +257,7 @@ pub async fn process_audio_with_gpt4o(
         }
     }
 
-    // Add custom instructions if available
-    if !custom_instructions.is_empty() {
-        prompt.push_str("\n\nAdditional instructions: ");
-        prompt.push_str(&custom_instructions);
-    }
-
-    info!("Using prompt: {}", prompt);
+    info!("Using whisper prompt: {}", prompt);
 
     // Create the form
     let file_bytes = fs::read(temp_file.path())?;
@@ -312,20 +299,99 @@ pub async fn process_audio_with_gpt4o(
     Ok(transcription)
 }
 
-// Helper function to get the OpenAI API key
-fn get_openai_api_key() -> Result<String> {
-    // For now, we'll use an environment variable as a fallback
-    // In a real implementation, we would get this from the app's state
-    std::env::var("OPENAI_API_KEY").map_err(|e| anyhow::anyhow!("OpenAI API key not found: {}", e))
-}
+// Function to process transcription with GPT-4o-mini
+pub async fn process_transcription_with_gpt4o(
+    transcription: &str,
+    app_handle: &tauri::AppHandle,
+) -> Result<String> {
+    info!("Processing transcription with GPT-4o-mini");
 
-// Function to process transcription with OpenAI (placeholder for now)
-pub fn process_with_openai(transcription: &str) -> Result<String> {
-    // This is a placeholder - in a real implementation, we would use the OpenAI API
-    info!("Processing transcription with OpenAI: {}", transcription);
+    // Get the OpenAI API key from the store
+    let api_key = match get_openai_api_key_from_store(app_handle.clone()).await {
+        Ok(key) => key,
+        Err(e) => {
+            error!("Failed to get OpenAI API key: {}", e);
+            return Err(anyhow::anyhow!(
+                "OpenAI API key not found. Please add your API key in the settings."
+            ));
+        }
+    };
+    info!("Retrieved OpenAI API key");
 
-    // For now, just return a dummy response
-    Ok("This is a dummy response from OpenAI.".to_string())
+    // Get custom vocabulary and instructions from the store
+    let (_custom_vocabulary, custom_instructions) =
+        match get_custom_settings_from_store(app_handle.clone()).await {
+            Ok(settings) => settings,
+            Err(e) => {
+                error!("Failed to get custom settings: {}", e);
+                (String::new(), String::new())
+            }
+        };
+    info!("Retrieved custom settings");
+
+    // Build the prompt with custom vocabulary and instructions
+    let mut prompt = String::from("You are a helpful assistant that processes dictation transcriptions. Respond with a copyedited version of the transcription. If there is a 'note to the editor' in the transcription, follow it. Otherwise, just fix any grammatical errors.");
+
+    // Add custom instructions if available
+    if !custom_instructions.is_empty() {
+        prompt.push_str("\n\nAdditional notes to consider while editing: ");
+        prompt.push_str(&custom_instructions);
+    }
+
+    info!("Using prompt for GPT-4o-mini: {}", prompt);
+
+    // Create the client
+    let client = reqwest::Client::new();
+
+    // Create the request body
+    let request_body = serde_json::json!({
+        "model": "gpt-4o-mini",
+        "messages": [
+            {
+                "role": "system",
+                "content": prompt
+            },
+            {
+                "role": "user",
+                "content": transcription
+            }
+        ],
+        "temperature": 0.2
+    });
+
+    info!("Sending request to OpenAI API for GPT-4o-mini...");
+
+    // Send the request
+    let response = client
+        .post("https://api.openai.com/v1/chat/completions")
+        .header("Authorization", format!("Bearer {}", api_key))
+        .header("Content-Type", "application/json")
+        .json(&request_body)
+        .send()
+        .await?;
+
+    info!(
+        "Received response from OpenAI API for GPT-4o-mini: {:?}",
+        response.status()
+    );
+
+    // Check if the request was successful
+    if !response.status().is_success() {
+        let error_text = response.text().await?;
+        error!("OpenAI API error: {}", error_text);
+        return Err(anyhow::anyhow!("OpenAI API error: {}", error_text));
+    }
+
+    // Parse the response
+    let response_json: serde_json::Value = response.json().await?;
+
+    // Extract the content from the response
+    let content = response_json["choices"][0]["message"]["content"]
+        .as_str()
+        .ok_or_else(|| anyhow::anyhow!("Failed to extract content from response"))?;
+
+    info!("GPT-4o-mini processing completed: {}", content);
+    Ok(content.to_string())
 }
 
 // Function to list available audio input devices
@@ -380,7 +446,7 @@ pub async fn stop_recording_and_process(
         .to_string_lossy()
         .to_string();
 
-    // Process the audio with GPT-4o-mini
+    // Process the audio with Whisper
     let transcription = match process_audio_with_gpt4o(&audio_path_str, &app_handle).await {
         Ok(text) => text,
         Err(e) => {
@@ -395,10 +461,20 @@ pub async fn stop_recording_and_process(
         }
     };
 
+    // Process the transcription with GPT-4o-mini
+    let processed_text = match process_transcription_with_gpt4o(&transcription, &app_handle).await {
+        Ok(text) => text,
+        Err(e) => {
+            error!("Failed to process transcription with GPT-4o-mini: {}", e);
+            // If GPT-4o-mini processing fails, use the original transcription
+            transcription.clone()
+        }
+    };
+
     // Return the result
     Ok(AudioProcessingResult {
-        transcription: transcription.clone(),
-        openai_response: transcription, // For now, we're using the same text for both
+        transcription: transcription,
+        openai_response: processed_text,
     })
 }
 
