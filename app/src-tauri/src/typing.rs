@@ -6,28 +6,31 @@ use std::process::Command;
 fn type_text_impl(text: &str) -> Result<()> {
     info!("Typing text on macOS");
 
-    // First, copy the text to clipboard
-    let mut copy_cmd = Command::new("pbcopy");
-    copy_cmd.stdin(std::process::Stdio::piped());
-    let mut copy_process = copy_cmd.spawn().context("Failed to start pbcopy process")?;
+    // Escape special characters for AppleScript
+    let escaped_text = text
+        .replace('"', r#"\""#)
+        .replace('\\', r#"\\"#)
+        .replace('$', r#"\$"#)
+        .replace('`', r#"\`"#);
 
-    if let Some(mut stdin) = copy_process.stdin.take() {
-        use std::io::Write;
-        stdin
-            .write_all(text.as_bytes())
-            .context("Failed to write to pbcopy stdin")?;
-    }
+    // Use a more reliable approach with AppleScript
+    // This approach uses a single AppleScript command that handles the entire text
+    // rather than splitting by newlines or using clipboard operations
+    let script = format!(
+        r#"tell application "System Events"
+            set theText to "{}"
+            repeat with i from 1 to (count of characters in theText)
+                set theChar to character i of theText
+                keystroke theChar
+            end repeat
+        end tell"#,
+        escaped_text
+    );
 
-    copy_process
-        .wait()
-        .context("Failed to wait for pbcopy process")?;
-
-    // Then paste the text using AppleScript
-    let paste_script = r#"tell application "System Events" to keystroke "v" using command down"#;
     Command::new("osascript")
-        .args(["-e", paste_script])
+        .args(["-e", &script])
         .output()
-        .context("Failed to execute paste command")?;
+        .context("Failed to execute osascript command")?;
 
     Ok(())
 }
