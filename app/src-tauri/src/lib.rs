@@ -6,15 +6,139 @@ use tauri::{
 };
 
 mod audio_processing;
+mod store;
 mod typing;
-use audio_processing::{
-    get_audio_input_devices, get_custom_settings_from_store, get_openai_api_key_from_store,
-    is_recording, start_recording, stop_recording_and_process, AudioRecorder,
-};
-use log::info;
+
+use audio_processing::{AudioProcessingResult, AudioRecorder};
+use log::{error, info};
+use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
 use typing::type_text;
 
-use std::sync::{Arc, Mutex};
+// Structure to track the recording state
+struct RecordingState {
+    is_recording: bool,
+    recorder: Option<AudioRecorder>,
+}
+
+impl RecordingState {
+    fn new() -> Self {
+        Self {
+            is_recording: false,
+            recorder: None,
+        }
+    }
+}
+
+// Function to start recording
+async fn start_recording_audio(app_handle: &tauri::AppHandle) -> Result<(), String> {
+    info!("Starting recording");
+
+    // Get the recording state
+    let mut state = app_handle
+        .state::<Arc<Mutex<RecordingState>>>()
+        .inner()
+        .lock()
+        .unwrap();
+
+    // Check if already recording
+    if state.is_recording {
+        return Err("Already recording".to_string());
+    }
+
+    // Create a new recorder
+    let mut recorder = AudioRecorder::new();
+
+    // Start recording
+    if let Err(e) = recorder.start_recording() {
+        return Err(format!("Failed to start recording: {}", e));
+    }
+
+    // Update state
+    state.is_recording = true;
+    state.recorder = Some(recorder);
+
+    Ok(())
+}
+
+// Function to stop recording
+async fn stop_recording_audio(app_handle: &tauri::AppHandle) -> Result<Option<PathBuf>, String> {
+    info!("Stopping recording");
+
+    // Get the recording state
+    let mut state = app_handle
+        .state::<Arc<Mutex<RecordingState>>>()
+        .inner()
+        .lock()
+        .unwrap();
+
+    // Check if recording
+    if !state.is_recording {
+        return Ok(None);
+    }
+
+    // Get the recorder
+    let mut recorder = match state.recorder.take() {
+        Some(recorder) => recorder,
+        None => return Err("No recorder found".to_string()),
+    };
+
+    // Update state
+    state.is_recording = false;
+
+    // Stop recording
+    recorder.stop_recording()
+}
+
+// Function to process audio
+async fn process_audio_file(
+    app_handle: &tauri::AppHandle,
+    audio_path: &str,
+) -> Result<AudioProcessingResult, String> {
+    info!("Processing audio file: {}", audio_path);
+
+    // Get the OpenAI API key
+    let api_key = match store::get_openai_api_key_from_store(app_handle.clone()).await {
+        Ok(key) => key,
+        Err(e) => {
+            error!("Failed to get OpenAI API key: {}", e);
+            return Err(
+                "OpenAI API key not found. Please add your API key in the settings.".to_string(),
+            );
+        }
+    };
+
+    // Get custom settings
+    let (custom_vocabulary, custom_instructions) =
+        match store::get_custom_settings_from_store(app_handle.clone()).await {
+            Ok(settings) => settings,
+            Err(e) => {
+                error!("Failed to get custom settings: {}", e);
+                (String::new(), String::new())
+            }
+        };
+
+    // Process the audio file
+    audio_processing::process_audio_file(
+        audio_path,
+        &api_key,
+        &custom_vocabulary,
+        &custom_instructions,
+    )
+    .await
+    .map_err(|e| format!("Failed to process audio: {}", e))
+}
+
+// Check if recording is active
+#[tauri::command]
+fn is_recording(app_handle: tauri::AppHandle) -> bool {
+    let state = app_handle
+        .state::<Arc<Mutex<RecordingState>>>()
+        .inner()
+        .lock()
+        .unwrap();
+    state.is_recording
+}
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -50,8 +174,9 @@ pub fn run() {
             // Create the tray icon with menu
             let tray = TrayIconBuilder::new()
                 .icon(image::Image::from_bytes(include_bytes!(
-                    "../icons/icon-dark.png"
+                    "../icons/icon-Template.png"
                 ))?)
+                .icon_as_template(true)
                 .menu(&menu)
                 .show_menu_on_left_click(false) // Don't show menu on left click
                 .on_menu_event(|app, event| match event.id.as_ref() {
@@ -105,52 +230,97 @@ pub fn run() {
                 // Initialize the global shortcut plugin
                 app_handle.plugin(
                     tauri_plugin_global_shortcut::Builder::new()
-                        .with_handler(move |app, shortcut, event| {
-                            if shortcut == &cmd_shift_space_shortcut {
-                                match event.state() {
-                                    ShortcutState::Pressed => {
-                                        info!("Cmd+Shift+Space Pressed!");
-                                        // Start recording audio
-                                        if let Err(e) = start_recording(app.clone()) {
-                                            info!("Failed to start recording: {}", e);
-                                            return;
+                        .with_handler({
+                            let tray = tray.clone();
+                            move |app, shortcut, event| {
+                                if shortcut == &cmd_shift_space_shortcut {
+                                    match event.state() {
+                                        ShortcutState::Pressed => {
+                                            info!("Cmd+Shift+Space Pressed!");
+                                            
+                                            // Start recording audio
+                                            let app_clone = app.clone();
+                                            let tray = tray.clone();
+                                            tauri::async_runtime::spawn(async move {
+                                                if let Err(e) = start_recording_audio(&app_clone).await {
+                                                    info!("Failed to start recording: {}", e);
+                                                    return;
+                                                }
+                                                
+                                                // Update tray icon to show recording
+                                                let _ = tray.set_icon(
+                                                    image::Image::from_bytes(include_bytes!(
+                                                        "../icons/icon-recording.png"
+                                                    ))
+                                                    .ok(),
+                                                );
+                                                let _ = tray.set_icon_as_template(false);
+                                            });
                                         }
-
-                                        let _ = tray.set_icon(
-                                            image::Image::from_bytes(include_bytes!(
-                                                "../icons/icon-active.png"
-                                            ))
-                                            .ok(),
-                                        );
-                                    }
-                                    ShortcutState::Released => {
-                                        info!("Cmd+Shift+Space Released!");
-                                        // Stop recording audio
-                                        let app_clone = app.clone();
-                                        tauri::async_runtime::spawn(async move {
-                                            match stop_recording_and_process(app_clone.clone())
-                                                .await
-                                            {
-                                                Ok(result) => {
-                                                    info!("Audio processing successful");
-                                                    // Type the text
-                                                    if let Err(e) =
-                                                        type_text(result.openai_response).await
-                                                    {
-                                                        info!("Failed to type text: {}", e);
+                                        ShortcutState::Released => {
+                                            info!("Cmd+Shift+Space Released!");
+                                            
+                                            // Clone for use in async task
+                                            let app_clone = app.clone();
+                                            let tray_clone = tray.clone();
+                                            
+                                            // Set to processing icon
+                                            let _ = tray_clone.set_icon(
+                                                image::Image::from_bytes(include_bytes!(
+                                                    "../icons/icon-processing.png"
+                                                ))
+                                                .ok(),
+                                            );
+                                            let _ = tray_clone.set_icon_as_template(false);
+                                            
+                                            tauri::async_runtime::spawn(async move {
+                                                // First stop the recording
+                                                match stop_recording_audio(&app_clone).await {
+                                                    Ok(Some(path)) => {
+                                                        info!("Recording stopped, processing audio...");
+                                                        let audio_path =
+                                                            path.to_string_lossy().to_string();
+                                                        
+                                                        // Process the audio
+                                                        match process_audio_file(
+                                                            &app_clone,
+                                                            &audio_path,
+                                                        )
+                                                        .await
+                                                        {
+                                                            Ok(result) => {
+                                                                info!("Audio processing successful");
+                                                                // Type the text
+                                                                if let Err(e) =
+                                                                    type_text(result.openai_response)
+                                                                        .await
+                                                                {
+                                                                    info!("Failed to type text: {}", e);
+                                                                }
+                                                            }
+                                                            Err(e) => {
+                                                                info!("Failed to process audio: {}", e);
+                                                            }
+                                                        }
+                                                    }
+                                                    Ok(None) => {
+                                                        info!("No audio was recorded");
+                                                    }
+                                                    Err(e) => {
+                                                        info!("Failed to stop recording: {}", e);
                                                     }
                                                 }
-                                                Err(e) => {
-                                                    info!("Failed to stop recording: {}", e);
-                                                }
-                                            }
-                                        });
-                                        let _ = tray.set_icon(
-                                            image::Image::from_bytes(include_bytes!(
-                                                "../icons/icon-dark.png"
-                                            ))
-                                            .ok(),
-                                        );
+                                                
+                                                // Set the icon back to normal when done
+                                                let _ = tray_clone.set_icon(
+                                                    image::Image::from_bytes(include_bytes!(
+                                                        "../icons/icon-Template.png"
+                                                    ))
+                                                    .ok(),
+                                                );
+                                                let _ = tray_clone.set_icon_as_template(true);
+                                            });
+                                        }
                                     }
                                 }
                             }
@@ -177,14 +347,9 @@ pub fn run() {
                 _ => {}
             }
         })
-        .manage(Arc::new(Mutex::new(AudioRecorder::new()))) // Register the AudioRecorder state wrapped in Arc<Mutex<>>
-        .invoke_handler(tauri::generate_handler![
-            is_recording,
-            get_audio_input_devices,
-            get_openai_api_key_from_store,
-            get_custom_settings_from_store,
-            type_text,
-        ])
+        // Register the RecordingState
+        .manage(Arc::new(Mutex::new(RecordingState::new())))
+        .invoke_handler(tauri::generate_handler![is_recording,])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

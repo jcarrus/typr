@@ -40,6 +40,7 @@ log = "0.4.20"  # For logging
 env_logger = "0.10.0"  # For logging
 dirs = "5.0"  # For handling data directory paths
 indicatif = "0.17.5"  # For progress bars
+enigo = "0.3.0"
 
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
 tauri-plugin-autostart = "2"
