@@ -59,9 +59,15 @@ if ! gh repo view "$GITHUB_USERNAME/$TAP_REPO" &>/dev/null; then
     gh repo create "$GITHUB_USERNAME/$TAP_REPO" --public --description "Homebrew tap for $APP_NAME" --license mit
 fi
 
-# Clone the tap repository if it doesn't exist locally
+# Clone or update the tap repository
 if [ ! -d "$TAP_REPO" ]; then
+    echo "Cloning tap repository..."
     gh repo clone "$GITHUB_USERNAME/$TAP_REPO"
+else
+    echo "Updating tap repository..."
+    cd "$TAP_REPO"
+    git pull
+    cd ..
 fi
 
 # Create or update the formula
