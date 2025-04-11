@@ -35,7 +35,9 @@ mkdir -p $RELEASE_DIR
 
 # Package the app
 echo "Packaging the app..."
-tar -czf $RELEASE_DIR/$APP_NAME.tar.gz ./target/release/bundle/macos/$APP_NAME.app
+cd ./target/release/bundle/macos
+tar -czf ../../../../$RELEASE_DIR/$APP_NAME.tar.gz .
+cd ../../../../
 
 # Calculate SHA-256
 SHA256=$(shasum -a 256 $RELEASE_DIR/$APP_NAME.tar.gz | cut -d ' ' -f 1)
