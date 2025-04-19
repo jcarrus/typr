@@ -196,7 +196,7 @@ pub async fn process_audio_file(
     info!("Read audio file: {} bytes", audio_data.len());
 
     // Build the prompt with custom vocabulary
-    let mut prompt = String::from("Here is a dictation of spoken text.");
+    let mut prompt = String::from("A user is dictating text to be typed into a computer program. Transcribe the text as accurately as possible.");
 
     // Add custom vocabulary if available
     if !custom_vocabulary.is_empty() {
@@ -206,8 +206,9 @@ pub async fn process_audio_file(
             .collect();
 
         if !vocabulary_list.is_empty() {
-            prompt.push_str("\n\nCommon words and phrases to recognize: ");
+            prompt.push_str("\n\nThe user may use the following uncommon words and phrases: ");
             prompt.push_str(&vocabulary_list.join(", "));
+            prompt.push_str("\n\nTranscription:\n");
         }
     }
 
@@ -251,58 +252,71 @@ pub async fn process_audio_file(
     let transcription = response.text().await?;
     info!("Transcription completed: {}", transcription);
 
-    // Process with GPT-4o-mini
-    let mut prompt = String::from("You are a helpful assistant that processes dictation transcriptions. Respond with a copyedited version of the transcription. If there is a 'note to the editor' in the transcription, follow it. Otherwise, just fix any grammatical errors. If the transcription is asking a question, but does not EXPLICITLY ask 'the editor' to respond, then do not respond and just transcribe the question.");
+    // Check if "note to the editor" is in the transcription
+    let should_process_with_gpt = transcription.to_lowercase().contains("note to the editor");
 
-    // Add custom instructions if available
-    if !custom_instructions.is_empty() {
-        prompt.push_str("\n\nAdditional notes to consider while editing: ");
-        prompt.push_str(custom_instructions);
-    }
+    let openai_response = if should_process_with_gpt {
+        info!("Processing with GPT-4o-mini as 'note to the editor' was found");
 
-    // Create the request body for GPT processing
-    let request_body = serde_json::json!({
-        "model": "gpt-4o-mini",
-        "messages": [
-            {
-                "role": "system",
-                "content": prompt
-            },
-            {
-                "role": "user",
-                "content": transcription
-            }
-        ],
-        "temperature": 0.2
-    });
+        // Process with GPT-4o-mini
+        let mut prompt = String::from("You are a helpful assistant that processes dictation transcriptions. Respond with a copyedited version of the transcription. If there is a 'note to the editor' in the transcription, follow it. Otherwise, just fix any grammatical errors. If the transcription is asking a question, but does not EXPLICITLY ask 'the editor' to respond, then do not respond and just transcribe the question.");
 
-    // Send the GPT request
-    let response = client
-        .post("https://api.openai.com/v1/chat/completions")
-        .header("Authorization", format!("Bearer {}", api_key))
-        .header("Content-Type", "application/json")
-        .json(&request_body)
-        .send()
-        .await?;
+        // Add custom instructions if available
+        if !custom_instructions.is_empty() {
+            prompt.push_str("\n\nAdditional notes to consider while editing: ");
+            prompt.push_str(custom_instructions);
+        }
 
-    // Check if the request was successful
-    if !response.status().is_success() {
-        let error_text = response.text().await?;
-        error!("OpenAI API error: {}", error_text);
-        return Err(anyhow::anyhow!("OpenAI API error: {}", error_text));
-    }
+        // Create the request body for GPT processing
+        let request_body = serde_json::json!({
+            "model": "gpt-4o-mini",
+            "messages": [
+                {
+                    "role": "system",
+                    "content": prompt
+                },
+                {
+                    "role": "user",
+                    "content": transcription
+                }
+            ],
+            "temperature": 0.2
+        });
 
-    // Parse the response
-    let response_json: serde_json::Value = response.json().await?;
+        // Send the GPT request
+        let response = client
+            .post("https://api.openai.com/v1/chat/completions")
+            .header("Authorization", format!("Bearer {}", api_key))
+            .header("Content-Type", "application/json")
+            .json(&request_body)
+            .send()
+            .await?;
 
-    // Extract the content from the response
-    let content = response_json["choices"][0]["message"]["content"]
-        .as_str()
-        .ok_or_else(|| anyhow::anyhow!("Failed to extract content from response"))?;
+        // Check if the request was successful
+        if !response.status().is_success() {
+            let error_text = response.text().await?;
+            error!("OpenAI API error: {}", error_text);
+            return Err(anyhow::anyhow!("OpenAI API error: {}", error_text));
+        }
+
+        // Parse the response
+        let response_json: serde_json::Value = response.json().await?;
+
+        // Extract the content from the response
+        let content = response_json["choices"][0]["message"]["content"]
+            .as_str()
+            .ok_or_else(|| anyhow::anyhow!("Failed to extract content from response"))?;
+
+        content.to_string()
+    } else {
+        info!("Skipping GPT-4o-mini processing as 'note to the editor' was not found");
+        // Return the transcription as is
+        transcription.clone()
+    };
 
     // Return the result
     Ok(AudioProcessingResult {
         transcription: transcription,
-        openai_response: content.to_string(),
+        openai_response: openai_response,
     })
 }
