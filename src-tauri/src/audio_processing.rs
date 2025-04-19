@@ -186,33 +186,14 @@ impl AudioRecorder {
 pub async fn process_audio_file(
     audio_path: &str,
     api_key: &str,
-    custom_vocabulary: &str,
-    custom_instructions: &str,
+    whisper_prompt: &str,
+    llm_prompt: &str,
 ) -> Result<AudioProcessingResult> {
     info!("Processing audio with GPT-4o-mini: {}", audio_path);
 
     // Read the audio file
     let audio_data = fs::read(audio_path)?;
     info!("Read audio file: {} bytes", audio_data.len());
-
-    // Build the prompt with custom vocabulary
-    let mut prompt = String::from("A user is dictating text to be typed into a computer program. Transcribe the text as accurately as possible.");
-
-    // Add custom vocabulary if available
-    if !custom_vocabulary.is_empty() {
-        let vocabulary_list: Vec<&str> = custom_vocabulary
-            .lines()
-            .filter(|line| !line.trim().is_empty())
-            .collect();
-
-        if !vocabulary_list.is_empty() {
-            prompt.push_str("\n\nThe user may use the following uncommon words and phrases: ");
-            prompt.push_str(&vocabulary_list.join(", "));
-            prompt.push_str("\n\nTranscription:\n");
-        }
-    }
-
-    info!("Using whisper prompt: {}", prompt);
 
     // Create the form for transcription
     let client = reqwest::Client::new();
@@ -225,7 +206,10 @@ pub async fn process_audio_file(
         .text("response_format", "text")
         .text("language", "en")
         .text("temperature", "0.2")
-        .text("prompt", prompt)
+        .text(
+            "prompt",
+            whisper_prompt.to_string() + " " + "\n\nTranscription:",
+        )
         .part(
             "file",
             reqwest::multipart::Part::bytes(file_bytes)
@@ -258,22 +242,13 @@ pub async fn process_audio_file(
     let openai_response = if should_process_with_gpt {
         info!("Processing with GPT-4o-mini as 'note to the editor' was found");
 
-        // Process with GPT-4o-mini
-        let mut prompt = String::from("You are a helpful assistant that processes dictation transcriptions. Respond with a copyedited version of the transcription. If there is a 'note to the editor' in the transcription, follow it. Otherwise, just fix any grammatical errors. If the transcription is asking a question, but does not EXPLICITLY ask 'the editor' to respond, then do not respond and just transcribe the question.");
-
-        // Add custom instructions if available
-        if !custom_instructions.is_empty() {
-            prompt.push_str("\n\nAdditional notes to consider while editing: ");
-            prompt.push_str(custom_instructions);
-        }
-
         // Create the request body for GPT processing
         let request_body = serde_json::json!({
             "model": "gpt-4o-mini",
             "messages": [
                 {
                     "role": "system",
-                    "content": prompt
+                    "content": llm_prompt
                 },
                 {
                     "role": "user",

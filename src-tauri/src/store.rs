@@ -36,16 +36,16 @@ pub async fn get_custom_settings_from_store(
         .map_err(|e| format!("Failed to load store: {}", e))?;
 
     // Get the custom vocabulary from the store
-    let custom_vocabulary = store
-        .get("customVocabulary")
+    let whisper_prompt = store
+        .get("whisperPrompt")
         .map(|v| v.as_str().unwrap_or("").to_string())
         .unwrap_or_default();
 
     // Get the custom instructions from the store
-    let custom_instructions = store
-        .get("customInstructions")
+    let llm_prompt = store
+        .get("llmPrompt")
         .map(|v| v.as_str().unwrap_or("").to_string())
         .unwrap_or_default();
 
-    Ok((custom_vocabulary, custom_instructions))
+    Ok((whisper_prompt, llm_prompt))
 }

@@ -2,10 +2,15 @@ import { useState, useEffect, useCallback } from "react";
 import { Store } from "@tauri-apps/plugin-store";
 import "./App.css";
 
+const DEFAULT_WHISPER_PROMPT =
+  "The following is a transcription of a dictation from a speaker who is XXX. The speaker sometimes discusses the following topics: YYY. The speaker sometimes uses the following uncommon terms: ZZZ.";
+const DEFAULT_LLM_PROMPT =
+  "You are a helpful assistant that will carefully examine the following transcription of a dictation and then carefully make the modifications requested of the editor.";
+
 function App() {
   const [openAIKey, setOpenAIKey] = useState("");
-  const [customVocabulary, setCustomVocabulary] = useState("");
-  const [customInstructions, setCustomInstructions] = useState("");
+  const [whisperPrompt, setWhisperPrompt] = useState("");
+  const [llmPrompt, setLlmPrompt] = useState("");
   const [isSaved, setIsSaved] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [store, setStore] = useState<Store | null>(null);
@@ -29,20 +34,20 @@ function App() {
       // Get values with default fallbacks
       const savedOpenAIKey =
         ((await storeInstance.get("openAIKey")) as string) || "";
-      const savedCustomVocabulary =
-        ((await storeInstance.get("customVocabulary")) as string) || "";
-      const savedCustomInstructions =
-        ((await storeInstance.get("customInstructions")) as string) || "";
+      const savedWhisperPrompt =
+        ((await storeInstance.get("whisperPrompt")) as string) || "";
+      const savedLlmPrompt =
+        ((await storeInstance.get("llmPrompt")) as string) || "";
 
       console.log("Loaded values:", {
         openAIKey: savedOpenAIKey ? "***" : "(empty)",
-        vocabulary: savedCustomVocabulary ? "present" : "(empty)",
-        instructions: savedCustomInstructions ? "present" : "(empty)",
+        whisperPrompt: savedWhisperPrompt ? "present" : "(empty)",
+        llmPrompt: savedLlmPrompt ? "present" : "(empty)",
       });
 
       setOpenAIKey(savedOpenAIKey);
-      setCustomVocabulary(savedCustomVocabulary);
-      setCustomInstructions(savedCustomInstructions);
+      setWhisperPrompt(savedWhisperPrompt || DEFAULT_WHISPER_PROMPT);
+      setLlmPrompt(savedLlmPrompt || DEFAULT_LLM_PROMPT);
     } catch (error) {
       console.error("Failed to load settings:", error);
       setError(
@@ -65,8 +70,8 @@ function App() {
     try {
       console.log("Saving settings...");
       await store.set("openAIKey", openAIKey);
-      await store.set("customVocabulary", customVocabulary);
-      await store.set("customInstructions", customInstructions);
+      await store.set("whisperPrompt", whisperPrompt);
+      await store.set("llmPrompt", llmPrompt);
       await store.save();
 
       console.log("Settings saved successfully");
@@ -81,7 +86,7 @@ function App() {
         }`
       );
     }
-  }, [store, openAIKey, customVocabulary, customInstructions]);
+  }, [store, openAIKey, whisperPrompt, llmPrompt]);
 
   // Debounced save effect
   useEffect(() => {
@@ -93,14 +98,7 @@ function App() {
     }, 1000); // 1 second debounce
 
     return () => clearTimeout(debounceTimer);
-  }, [
-    openAIKey,
-    customVocabulary,
-    customInstructions,
-    saveSettings,
-    isLoading,
-    store,
-  ]);
+  }, [openAIKey, whisperPrompt, llmPrompt, saveSettings, isLoading, store]);
 
   // Load settings on mount
   useEffect(() => {
@@ -185,15 +183,16 @@ function App() {
             <label className="label flex items-baseline">
               <div className="label-text font-medium">Custom Vocabulary</div>
               <div className="label-text-alt text-info text-xs">
-                Add specialized terms or phrases to improve transcription
-                accuracy
+                This prompt will be given to the Speech-to-Text model. Providing
+                relevant context and key words will result in a more accurate
+                transcription.
               </div>
             </label>
             <textarea
               className="textarea textarea-bordered h-32"
-              placeholder="Enter specialized terms, one per line"
-              value={customVocabulary}
-              onChange={(e) => setCustomVocabulary(e.target.value)}
+              placeholder={DEFAULT_WHISPER_PROMPT}
+              value={whisperPrompt}
+              onChange={(e) => setWhisperPrompt(e.target.value)}
             ></textarea>
           </div>
 
@@ -201,14 +200,15 @@ function App() {
             <label className="label">
               <div className="label-text font-medium">Custom Instructions</div>
               <div className="label-text-alt text-info text-xs">
-                Add instructions to customize how your dictation is processed
+                Add instructions to customize how your dictation is processed if
+                you use the keywords "note to the editor" in the transcription.
               </div>
             </label>
             <textarea
               className="textarea textarea-bordered h-32"
-              placeholder="Enter custom instructions for transcription"
-              value={customInstructions}
-              onChange={(e) => setCustomInstructions(e.target.value)}
+              placeholder={DEFAULT_LLM_PROMPT}
+              value={llmPrompt}
+              onChange={(e) => setLlmPrompt(e.target.value)}
             ></textarea>
           </div>
         </form>
