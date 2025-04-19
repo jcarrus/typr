@@ -307,11 +307,11 @@ pub async fn process_audio_file(
             .as_str()
             .ok_or_else(|| anyhow::anyhow!("Failed to extract content from response"))?;
 
-        content.to_string()
+        content.trim().to_string()
     } else {
         info!("Skipping GPT-4o-mini processing as 'note to the editor' was not found");
         // Return the transcription as is
-        transcription.clone()
+        transcription.trim().to_string()
     };
 
     // Return the result
