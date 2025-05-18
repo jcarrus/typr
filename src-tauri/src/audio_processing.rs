@@ -1,13 +1,14 @@
 use anyhow::Result;
 use chrono::Local;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-use cpal::{FromSample, Sample, SampleFormat};
-use hound::{WavSpec, WavWriter};
+use cpal::SampleFormat;
 use log::{error, info};
+use mp3lame_encoder::{Builder, DualPcm, FlushNoGap};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::fs::File;
-use std::io::BufWriter;
+use std::io::Write;
+use std::mem::MaybeUninit;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
@@ -22,7 +23,8 @@ pub struct AudioProcessingResult {
 pub struct AudioRecorder {
     is_recording: Arc<Mutex<bool>>,
     stream: Option<cpal::Stream>,
-    writer: Option<Arc<Mutex<Option<WavWriter<BufWriter<File>>>>>>,
+    encoder: Option<Arc<Mutex<mp3lame_encoder::Encoder>>>,
+    output_file: Option<Arc<Mutex<File>>>,
     current_file: Option<PathBuf>,
 }
 
@@ -36,7 +38,8 @@ impl AudioRecorder {
         AudioRecorder {
             is_recording: Arc::new(Mutex::new(false)),
             stream: None,
-            writer: None,
+            encoder: None,
+            output_file: None,
             current_file: None,
         }
     }
@@ -73,45 +76,67 @@ impl AudioRecorder {
         fs::create_dir_all(&output_dir).map_err(|e| e.to_string())?;
 
         let timestamp = Local::now().format("%Y%m%d_%H%M%S").to_string();
-        let file_path = output_dir.join(format!("recording_{}.wav", timestamp));
+        let file_path = output_dir.join(format!("recording_{}.mp3", timestamp));
         let file = File::create(&file_path).map_err(|e| e.to_string())?;
 
         self.current_file = Some(file_path.clone());
 
-        // Create WAV writer with proper spec
-        let spec = wav_spec_from_config(&config);
-        let writer = WavWriter::new(BufWriter::new(file), spec)
-            .map_err(|e| format!("Failed to create WAV writer: {}", e))?;
+        // Create MP3 encoder
+        let mut mp3_encoder = Builder::new().expect("Create LAME builder");
+        mp3_encoder
+            .set_num_channels(config.channels() as u8)
+            .expect("set channels");
+        mp3_encoder
+            .set_sample_rate(config.sample_rate().0)
+            .expect("set sample rate");
+        mp3_encoder
+            .set_quality(mp3lame_encoder::Quality::Best)
+            .expect("set quality");
 
-        let writer = Arc::new(Mutex::new(Some(writer)));
-        let writer_clone = writer.clone();
+        let encoder = mp3_encoder.build().expect("To initialize LAME encoder");
+        let encoder = Arc::new(Mutex::new(encoder));
+        let output_file = Arc::new(Mutex::new(file));
+
+        let encoder_clone = encoder.clone();
+        let output_file_clone = output_file.clone();
 
         let err_fn = move |err| {
             error!("An error occurred on stream: {}", err);
         };
 
         let stream = match config.sample_format() {
-            SampleFormat::I8 => device.build_input_stream(
-                &config.into(),
-                move |data, _: &_| write_input_data::<i8, i8>(data, &writer_clone),
-                err_fn,
-                None,
-            ),
-            SampleFormat::I16 => device.build_input_stream(
-                &config.into(),
-                move |data, _: &_| write_input_data::<i16, i16>(data, &writer_clone),
-                err_fn,
-                None,
-            ),
-            SampleFormat::I32 => device.build_input_stream(
-                &config.into(),
-                move |data, _: &_| write_input_data::<i32, i32>(data, &writer_clone),
-                err_fn,
-                None,
-            ),
             SampleFormat::F32 => device.build_input_stream(
                 &config.into(),
-                move |data, _: &_| write_input_data::<f32, f32>(data, &writer_clone),
+                move |data: &[f32], _: &_| {
+                    let mut left_pcm = Vec::with_capacity(data.len() / 2);
+                    let mut right_pcm = Vec::with_capacity(data.len() / 2);
+                    for chunks in data.chunks_exact(2) {
+                        left_pcm.push((chunks[0] * 32767.0) as i16);
+                        right_pcm.push((chunks[1] * 32767.0) as i16);
+                    }
+                    let input = DualPcm {
+                        left: &left_pcm[..],
+                        right: &right_pcm[..],
+                    };
+
+                    let buffer_size = mp3lame_encoder::max_required_buffer_size(input.left.len());
+                    let mut mp3_buffer = vec![MaybeUninit::uninit(); buffer_size];
+
+                    if let Ok(mut encoder) = encoder_clone.lock() {
+                        if let Ok(mut output_file) = output_file_clone.lock() {
+                            if let Ok(encoded_size) = encoder.encode(input, &mut mp3_buffer) {
+                                // Safety: mp3lame has initialized the first encoded_size bytes
+                                let encoded_data = unsafe {
+                                    std::slice::from_raw_parts(
+                                        mp3_buffer.as_ptr() as *const u8,
+                                        encoded_size,
+                                    )
+                                };
+                                output_file.write_all(encoded_data).ok();
+                            }
+                        }
+                    }
+                },
                 err_fn,
                 None,
             ),
@@ -127,7 +152,8 @@ impl AudioRecorder {
         stream.play().map_err(|e| e.to_string())?;
 
         self.stream = Some(stream);
-        self.writer = Some(writer);
+        self.encoder = Some(encoder);
+        self.output_file = Some(output_file);
 
         Ok(())
     }
@@ -145,50 +171,21 @@ impl AudioRecorder {
         // Stop the stream
         self.stream.take();
 
-        // Finalize the WAV file
-        if let Some(writer) = self.writer.take() {
-            if let Ok(mut guard) = writer.lock() {
-                if let Some(writer) = guard.take() {
-                    writer.finalize().map_err(|e| e.to_string())?;
+        // Flush the encoder and close the file
+        if let (Some(encoder), Some(output_file)) = (self.encoder.take(), self.output_file.take()) {
+            if let (Ok(mut encoder), Ok(mut output_file)) = (encoder.lock(), output_file.lock()) {
+                let mut mp3_buffer = vec![MaybeUninit::uninit(); 7200];
+                if let Ok(encoded_size) = encoder.flush::<FlushNoGap>(&mut mp3_buffer) {
+                    // Safety: mp3lame has initialized the first encoded_size bytes
+                    let encoded_data = unsafe {
+                        std::slice::from_raw_parts(mp3_buffer.as_ptr() as *const u8, encoded_size)
+                    };
+                    output_file.write_all(encoded_data).ok();
                 }
             }
         }
 
         Ok(self.current_file.take())
-    }
-}
-
-fn sample_format(format: SampleFormat) -> hound::SampleFormat {
-    if format.is_float() {
-        hound::SampleFormat::Float
-    } else {
-        hound::SampleFormat::Int
-    }
-}
-
-fn wav_spec_from_config(config: &cpal::SupportedStreamConfig) -> WavSpec {
-    WavSpec {
-        channels: config.channels() as _,
-        sample_rate: config.sample_rate().0 as _,
-        bits_per_sample: (config.sample_format().sample_size() * 8) as _,
-        sample_format: sample_format(config.sample_format()),
-    }
-}
-
-type WavWriterHandle = Arc<Mutex<Option<WavWriter<BufWriter<File>>>>>;
-
-fn write_input_data<T, U>(input: &[T], writer: &WavWriterHandle)
-where
-    T: Sample,
-    U: Sample + hound::Sample + FromSample<T>,
-{
-    if let Ok(mut guard) = writer.try_lock() {
-        if let Some(writer) = guard.as_mut() {
-            for &sample in input.iter() {
-                let sample: U = U::from_sample(sample);
-                writer.write_sample(sample).ok();
-            }
-        }
     }
 }
 
