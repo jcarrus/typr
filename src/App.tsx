@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { Store } from "@tauri-apps/plugin-store";
+import { invoke } from "@tauri-apps/api/core";
 import "./App.css";
 
 const DEFAULT_WHISPER_PROMPT =
@@ -11,6 +12,8 @@ function App() {
   const [openAIKey, setOpenAIKey] = useState("");
   const [whisperPrompt, setWhisperPrompt] = useState("");
   const [llmPrompt, setLlmPrompt] = useState("");
+  const [useLocalWhisper, setUseLocalWhisper] = useState(false);
+  const [isLocalWhisperAvailable, setIsLocalWhisperAvailable] = useState(false);
   const [isSaved, setIsSaved] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [store, setStore] = useState<Store | null>(null);
@@ -38,16 +41,30 @@ function App() {
         ((await storeInstance.get("whisperPrompt")) as string) || "";
       const savedLlmPrompt =
         ((await storeInstance.get("llmPrompt")) as string) || "";
+      const savedUseLocalWhisper =
+        ((await storeInstance.get("useLocalWhisper")) as boolean) || false;
 
       console.log("Loaded values:", {
         openAIKey: savedOpenAIKey ? "***" : "(empty)",
         whisperPrompt: savedWhisperPrompt ? "present" : "(empty)",
         llmPrompt: savedLlmPrompt ? "present" : "(empty)",
+        useLocalWhisper: savedUseLocalWhisper,
       });
 
       setOpenAIKey(savedOpenAIKey);
       setWhisperPrompt(savedWhisperPrompt || DEFAULT_WHISPER_PROMPT);
       setLlmPrompt(savedLlmPrompt || DEFAULT_LLM_PROMPT);
+      setUseLocalWhisper(savedUseLocalWhisper);
+
+      // Check if local Whisper is available
+      try {
+        const available = await invoke<boolean>("is_local_whisper_available");
+        setIsLocalWhisperAvailable(available);
+        console.log("Local Whisper available:", available);
+      } catch (error) {
+        console.error("Failed to check local Whisper availability:", error);
+        setIsLocalWhisperAvailable(false);
+      }
     } catch (error) {
       console.error("Failed to load settings:", error);
       setError(
@@ -72,6 +89,7 @@ function App() {
       await store.set("openAIKey", openAIKey);
       await store.set("whisperPrompt", whisperPrompt);
       await store.set("llmPrompt", llmPrompt);
+      await store.set("useLocalWhisper", useLocalWhisper);
       await store.save();
 
       console.log("Settings saved successfully");
@@ -86,7 +104,7 @@ function App() {
         }`
       );
     }
-  }, [store, openAIKey, whisperPrompt, llmPrompt]);
+  }, [store, openAIKey, whisperPrompt, llmPrompt, useLocalWhisper]);
 
   // Debounced save effect
   useEffect(() => {
@@ -98,7 +116,15 @@ function App() {
     }, 1000); // 1 second debounce
 
     return () => clearTimeout(debounceTimer);
-  }, [openAIKey, whisperPrompt, llmPrompt, saveSettings, isLoading, store]);
+  }, [
+    openAIKey,
+    whisperPrompt,
+    llmPrompt,
+    useLocalWhisper,
+    saveSettings,
+    isLoading,
+    store,
+  ]);
 
   // Load settings on mount
   useEffect(() => {
@@ -177,6 +203,26 @@ function App() {
               value={openAIKey}
               onChange={(e) => setOpenAIKey(e.target.value)}
             />
+          </div>
+
+          <div className="form-control w-full mb-4">
+            <label className="label cursor-pointer">
+              <div className="flex flex-col items-start">
+                <div className="label-text font-medium">Use Local Whisper</div>
+                <div className="label-text-alt text-info text-xs">
+                  {isLocalWhisperAvailable
+                    ? "Use locally installed Whisper instead of OpenAI API (faster and free)"
+                    : "Local Whisper not detected. Install with: pip install openai-whisper"}
+                </div>
+              </div>
+              <input
+                type="checkbox"
+                className="toggle toggle-primary"
+                checked={useLocalWhisper}
+                onChange={(e) => setUseLocalWhisper(e.target.checked)}
+                disabled={!isLocalWhisperAvailable}
+              />
+            </label>
           </div>
 
           <div className="form-control w-full mb-4 flex flex-col gap-2">

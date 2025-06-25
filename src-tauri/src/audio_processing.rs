@@ -10,6 +10,7 @@ use std::fs::File;
 use std::io::Write;
 use std::mem::MaybeUninit;
 use std::path::PathBuf;
+use std::process::Command;
 use std::sync::{Arc, Mutex};
 
 // Struct to hold the result of audio processing
@@ -189,26 +190,65 @@ impl AudioRecorder {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize)]
-pub struct Replacement {
-    from: String,
-    to: String,
+// Check if Whisper is available locally
+pub fn is_whisper_available() -> bool {
+    Command::new("whisper").output().is_ok()
 }
 
-// Process audio file with Whisper and GPT-4o
-pub async fn process_audio_file(
+// Use local Whisper for transcription - simplified version
+async fn transcribe_with_local_whisper(audio_path: &str, whisper_prompt: &str) -> Result<String> {
+    info!("Using local Whisper for transcription: {}", audio_path);
+
+    // Simple Whisper command - let Whisper handle the audio format
+    let mut cmd = Command::new("whisper");
+    cmd.args([
+        audio_path,
+        "--model",
+        "base",
+        "--language",
+        "en",
+        "--output_format",
+        "txt",
+        "--output_dir",
+        "/tmp/typr",
+        "--verbose",
+        "False",
+    ]);
+
+    // Add prompt if provided
+    if !whisper_prompt.is_empty() {
+        cmd.args(["--initial_prompt", whisper_prompt]);
+    }
+
+    let output = cmd.output()?;
+
+    if !output.status.success() {
+        let error_msg = String::from_utf8_lossy(&output.stderr);
+        return Err(anyhow::anyhow!("Whisper failed: {}", error_msg));
+    }
+
+    // Read the output file
+    let input_path_buf = PathBuf::from(audio_path);
+    let input_filename = input_path_buf
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("recording");
+
+    let output_file = format!("/tmp/typr/{}.txt", input_filename);
+
+    let content = fs::read_to_string(&output_file)?;
+    let _ = fs::remove_file(&output_file); // Clean up
+
+    Ok(content.trim().to_string())
+}
+
+// Use OpenAI API for transcription
+async fn transcribe_with_openai_api(
     audio_path: &str,
     api_key: &str,
     whisper_prompt: &str,
-    llm_prompt: &str,
-) -> Result<AudioProcessingResult> {
-    info!("Processing audio with whisper: {}", audio_path);
-
-    // Define replacements
-    let replacements = vec![Replacement {
-        from: "slap".to_string(),
-        to: "\n".to_string(),
-    }];
+) -> Result<String> {
+    info!("Using OpenAI API for transcription: {}", audio_path);
 
     // Read the audio file
     let audio_data = fs::read(audio_path)?;
@@ -252,92 +292,66 @@ pub async fn process_audio_file(
     }
 
     // Get the transcription
-    let mut transcription = response.text().await?;
-    info!("Transcription completed: {}", transcription);
+    let transcription = response.text().await?;
+    info!("OpenAI transcription completed: {}", transcription);
 
-    // Apply replacements
-    let should_perform_substitutions = replacements.len() > 0;
-    transcription = if should_perform_substitutions {
-        info!("Processing replacements with GPT-4o-mini");
+    Ok(transcription)
+}
 
-        // Create the request body for GPT processing
-        let request_body = serde_json::json!({
-            "model": "gpt-4.1-mini",
-            "messages": [
-                {
-                    "role": "system",
-                    "content": "You are a careful copyeditor who is copyediting a rough voice transcription output. Your task is to read the transcription and return a copyedited version. Keep the same language and tone as the original transcription. Only make changes to the punctuation, duplicate words, incorrect words, etc. Additionally look out for any of the keyword substitutions and make the necessary replacements in the output. If the keyword appears more than once, then include an equal number of replacements in the output."
-                },
-                {
-                    "role": "user",
-                    "content": format!("Keyword substitutions (when the user uses the keyword, they are really meaning to add the replacement text): {}\n\nTranscription: {}", replacements.iter().map(|r| format!("'{}' -> '{}'", r.from, r.to)).collect::<Vec<String>>().join("\n"), transcription)
-                }
-            ],
-            "temperature": 0.2
-        });
+// Process audio file with Whisper and GPT-4o
+pub async fn process_audio_file(
+    audio_path: &str,
+    api_key: &str,
+    whisper_prompt: &str,
+    llm_prompt: &str,
+    use_local_whisper: bool,
+) -> Result<AudioProcessingResult> {
+    info!("Processing audio with whisper: {}", audio_path);
 
-        // Send the GPT request
-        let response = client
-            .post("https://api.openai.com/v1/chat/completions")
-            .header("Authorization", format!("Bearer {}", api_key))
-            .header("Content-Type", "application/json")
-            .json(&request_body)
-            .send()
-            .await?;
-
-        // Check if the request was successful
-        if !response.status().is_success() {
-            let error_text = response.text().await?;
-            error!("OpenAI API error: {}", error_text);
-            return Err(anyhow::anyhow!("OpenAI API error: {}", error_text));
-        }
-
-        // Parse the response
-        let response_json: serde_json::Value = response.json().await?;
-
-        // Extract the content from the response
-        let content = response_json["choices"][0]["message"]["content"]
-            .as_str()
-            .ok_or_else(|| anyhow::anyhow!("Failed to extract content from response"))?;
-
-        content.trim().to_string()
+    // Get transcription - try local first if enabled, otherwise use OpenAI
+    let mut transcription = if use_local_whisper && is_whisper_available() {
+        info!("Using local Whisper");
+        transcribe_with_local_whisper(audio_path, whisper_prompt)
+            .await
+            .unwrap_or_else(|e| {
+                error!("Local Whisper failed, falling back to OpenAI: {}", e);
+                // Return empty string to trigger OpenAI fallback
+                String::new()
+            })
     } else {
-        info!("Skipping GPT-4o-mini processing as no replacements were found");
-        // Return the transcription as is
-        transcription.trim().to_string()
+        String::new() // Will trigger OpenAI API
     };
+
+    // Use OpenAI if local Whisper wasn't used or failed
+    if transcription.is_empty() {
+        transcription = transcribe_with_openai_api(audio_path, api_key, whisper_prompt).await?;
+    }
+
+    // Apply simple replacements
+    transcription = transcription.replace("slap", "\n");
 
     // Clean up whitespace
     transcription = transcription
         .lines()
         .map(|line| line.trim())
+        .filter(|line| !line.is_empty())
         .collect::<Vec<_>>()
         .join("\n");
-    transcription = transcription.replace("  ", " ");
 
-    // Check if "note to the editor" is in the transcription
-    let should_process_with_gpt = transcription.to_lowercase().contains("note to the editor");
+    // Process with GPT if "note to the editor" is mentioned
+    let openai_response = if transcription.to_lowercase().contains("note to the editor") {
+        info!("Processing with GPT-4o-mini");
 
-    let openai_response = if should_process_with_gpt {
-        info!("Processing with GPT-4o-mini as 'note to the editor' was found");
-
-        // Create the request body for GPT processing
+        let client = reqwest::Client::new();
         let request_body = serde_json::json!({
             "model": "gpt-4o-mini",
-            "messages": [
-                // {
-                //     "role": "system",
-                //     "content": ""
-                // },
-                {
-                    "role": "user",
-                    "content": format!("Task: {}\n\nTranscription: {}", llm_prompt, transcription)
-                }
-            ],
+            "messages": [{
+                "role": "user",
+                "content": format!("Task: {}\n\nTranscription: {}", llm_prompt, transcription)
+            }],
             "temperature": 0.2
         });
 
-        // Send the GPT request
         let response = client
             .post("https://api.openai.com/v1/chat/completions")
             .header("Authorization", format!("Bearer {}", api_key))
@@ -346,31 +360,22 @@ pub async fn process_audio_file(
             .send()
             .await?;
 
-        // Check if the request was successful
-        if !response.status().is_success() {
-            let error_text = response.text().await?;
-            error!("OpenAI API error: {}", error_text);
-            return Err(anyhow::anyhow!("OpenAI API error: {}", error_text));
+        if response.status().is_success() {
+            let response_json: serde_json::Value = response.json().await?;
+            response_json["choices"][0]["message"]["content"]
+                .as_str()
+                .unwrap_or(&transcription)
+                .trim()
+                .to_string()
+        } else {
+            transcription.clone()
         }
-
-        // Parse the response
-        let response_json: serde_json::Value = response.json().await?;
-
-        // Extract the content from the response
-        let content = response_json["choices"][0]["message"]["content"]
-            .as_str()
-            .ok_or_else(|| anyhow::anyhow!("Failed to extract content from response"))?;
-
-        content.trim().to_string()
     } else {
-        info!("Skipping GPT-4o-mini processing as 'note to the editor' was not found");
-        // Return the transcription as is
-        transcription.trim().to_string()
+        transcription.clone()
     };
 
-    // Return the result
     Ok(AudioProcessingResult {
-        transcription: transcription,
-        openai_response: openai_response,
+        transcription,
+        openai_response,
     })
 }

@@ -10,7 +10,7 @@ mod store;
 mod typing;
 
 use audio_processing::{AudioProcessingResult, AudioRecorder};
-use log::{error, info};
+use log::info;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use typing::type_text;
@@ -97,33 +97,17 @@ async fn process_audio_file(
 ) -> Result<AudioProcessingResult, String> {
     info!("Processing audio file: {}", audio_path);
 
-    // Get the OpenAI API key
-    let api_key = match store::get_openai_api_key_from_store(app_handle.clone()).await {
-        Ok(key) => key,
-        Err(e) => {
-            error!("Failed to get OpenAI API key: {}", e);
-            return Err(
-                "OpenAI API key not found. Please add your API key in the settings.".to_string(),
-            );
-        }
-    };
-
-    // Get custom settings
-    let (custom_vocabulary, custom_instructions) =
-        match store::get_custom_settings_from_store(app_handle.clone()).await {
-            Ok(settings) => settings,
-            Err(e) => {
-                error!("Failed to get custom settings: {}", e);
-                (String::new(), String::new())
-            }
-        };
+    // Get all settings in one call
+    let (api_key, whisper_prompt, llm_prompt, use_local_whisper) = 
+        store::get_all_settings_from_store(app_handle.clone()).await?;
 
     // Process the audio file
     audio_processing::process_audio_file(
         audio_path,
         &api_key,
-        &custom_vocabulary,
-        &custom_instructions,
+        &whisper_prompt,
+        &llm_prompt,
+        use_local_whisper,
     )
     .await
     .map_err(|e| format!("Failed to process audio: {}", e))
@@ -138,6 +122,12 @@ fn is_recording(app_handle: tauri::AppHandle) -> bool {
         .lock()
         .unwrap();
     state.is_recording
+}
+
+// Check if local Whisper is available
+#[tauri::command]
+fn is_local_whisper_available() -> bool {
+    audio_processing::is_whisper_available()
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -349,7 +339,7 @@ pub fn run() {
         })
         // Register the RecordingState
         .manage(Arc::new(Mutex::new(RecordingState::new())))
-        .invoke_handler(tauri::generate_handler![is_recording,])
+        .invoke_handler(tauri::generate_handler![is_recording, is_local_whisper_available])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
