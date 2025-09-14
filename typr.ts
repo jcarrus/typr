@@ -92,11 +92,21 @@ async function notify(
   urgency: "low" | "normal" | "critical" = "normal"
 ): Promise<void> {
   try {
-    // Use desktop notifications - works across all modern Linux desktops
-    const command = new Deno.Command("notify-send", {
-      args: ["--urgency", urgency, "--app-name", "Typr", message],
-    });
-    await command.output();
+    if (Deno.build.os === "darwin") {
+      // Use macOS native notifications
+      const script = `display notification "${message.replace(
+        /"/g,
+        '\\"'
+      )}" with title "Typr"`;
+      const command = new Deno.Command("osascript", { args: ["-e", script] });
+      await command.output();
+    } else {
+      // Use desktop notifications for Linux
+      const command = new Deno.Command("notify-send", {
+        args: ["--urgency", urgency, "--app-name", "Typr", message],
+      });
+      await command.output();
+    }
   } catch (error) {
     // Fallback to console if notifications fail
     console.log(`🔔 ${message}`);
@@ -163,21 +173,29 @@ async function startRecording(): Promise<string | null> {
   setState("audioPath", audioPath);
 
   // Use ffmpeg for cross-platform audio recording
+  const inputArgs =
+    Deno.build.os === "darwin"
+      ? ["-f", "avfoundation", "-i", ":0"] // macOS microphone
+      : ["-f", "pulse", "-i", "default"]; // Linux
+
+  const ffmpegArgs = [
+    ...inputArgs,
+    "-acodec",
+    "pcm_s16le",
+    "-ar",
+    "16000",
+    "-ac",
+    "1",
+    "-f",
+    "wav", // Explicitly specify WAV format
+    "-y", // Overwrite output file
+    audioPath,
+  ];
+
+  logToFile("INFO", `ffmpegArgs: ${ffmpegArgs}`);
+
   const command = new Deno.Command("ffmpeg", {
-    args: [
-      "-f",
-      "pulse",
-      "-i",
-      "default",
-      "-acodec",
-      "pcm_s16le",
-      "-ar",
-      "16000",
-      "-ac",
-      "1",
-      "-y", // Overwrite output file
-      audioPath,
-    ],
+    args: ffmpegArgs,
     stdin: "piped",
     stdout: "piped",
     stderr: "piped",
@@ -195,9 +213,16 @@ async function startRecording(): Promise<string | null> {
 
   const startTimestamp = Date.now();
 
+  // Capture stderr for debugging
+  const stderr = await new Response(process.stderr).text();
+
   // Wait for the ffmpeg process to finish (either killed by second process or naturally)
   const status = await process.status;
   await logToFile("INFO", `FFmpeg process finished with code: ${status.code}`);
+
+  if (stderr.trim()) {
+    await logToFile("INFO", `FFmpeg stderr: ${stderr}`);
+  }
 
   // If it's been less than 1 second, then just exit
   if (Date.now() - startTimestamp < 1000) {
@@ -293,12 +318,15 @@ async function transcribeWithOpenAI(
     }
   );
 
+  const transcription = await response.text();
+
+  await logToFile("INFO", `OpenAI transcription: ${transcription}`);
+
   if (!response.ok) {
-    const errorText = await response.text();
-    throw new Error(`OpenAI API error: ${errorText}`);
+    throw new Error(`OpenAI API error: ${transcription}`);
   }
 
-  return await response.text();
+  return transcription;
 }
 
 // Text processing with OpenAI
@@ -338,7 +366,7 @@ async function processWithGPT(
 
 // Text typing simulation
 async function typeText(text: string): Promise<void> {
-  await logToFile("INFO", `⌨️  Typing ${text.length} characters...`);
+  await logToFile("INFO", `⌨️  Typing: ${text}`);
 
   try {
     switch (Deno.build.os) {
@@ -501,14 +529,40 @@ async function handleToggleRecording(): Promise<void> {
   const ffmpegPid = await getState("ffmpegPid");
 
   if (ffmpegPid) {
+    // Verify the process is actually running
+    try {
+      const command = new Deno.Command("ps", { args: ["-p", ffmpegPid] });
+      const result = await command.output();
+      if (!result.success) {
+        // Process doesn't exist, clear stale state
+        await logToFile("INFO", `Stale PID ${ffmpegPid} found, clearing state`);
+        await clearState();
+      }
+    } catch {
+      // ps command failed, assume process doesn't exist
+      await logToFile(
+        "INFO",
+        `Could not check PID ${ffmpegPid}, clearing state`
+      );
+      await clearState();
+      // Continue to start new recording
+    }
+  }
+
+  if (ffmpegPid && (await getState("ffmpegPid"))) {
+    // Re-check after potential cleanup
     // Second toggle: Kill the ffmpeg process directly
     await notify("⏹️ Stopping recording...", "low");
     await playDoubleBeep();
     try {
       await logToFile("INFO", `Sending SIGTERM to ffmpeg process ${ffmpegPid}`);
       Deno.kill(parseInt(ffmpegPid), "SIGTERM");
-    } catch (e) {
-      await logToFile("ERROR", "Failed to kill ffmpeg process", e);
+    } catch {
+      // Process may have already ended, which is fine
+      await logToFile(
+        "INFO",
+        `Process ${ffmpegPid} already ended or not found`
+      );
     }
     return;
   }
