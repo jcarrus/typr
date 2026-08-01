@@ -75,9 +75,10 @@ never inserted. Profile editing uses the larger `qwen3.6:latest` model because
 these infrequent durable changes favor accuracy over hot-path latency. Choose
 **Test Shift+Fn…** from the menu to verify the modifier
 combination without recording or changing the profile. Profile commands use
-schema-constrained JSON, keep previous dictation and Accessibility prose out of
-new rules unless explicitly referenced, and always notify with the operations
-that were applied. Rules remain human-readable instructions for Qwen.
+schema-constrained JSON and retain the previous dictation only to resolve
+explicit references such as “that name.” Rules are short declarative facts such
+as “Justin works with Mollie Breen,” not spelling instructions or correction
+procedures. Profile updates always notify with the operations that were applied.
 Choose **Profile…** from the menu-bar icon to view the effective rules.
 
 Typr inserts the first transcription path as soon as its Qwen rewrite finishes.
