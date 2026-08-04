@@ -72,7 +72,9 @@ Hold Shift+Fn in either order to teach Typr about Justin, vocabulary,
 recognition corrections, or writing preferences. Qwen applies atomic add,
 replace, and remove operations to the local versioned profile; feedback is
 never inserted. Profile editing uses the larger `qwen3.6:latest` model because
-these infrequent durable changes favor accuracy over hot-path latency. Choose
+these infrequent durable changes favor accuracy over hot-path latency. Typr
+unloads its 23 GB weights immediately after each profile update while keeping
+the 3 GB dictation model resident for low-latency use. Choose
 **Test Shift+Fn…** from the menu to verify the modifier
 combination without recording or changing the profile. Profile commands use
 schema-constrained JSON and retain the previous dictation only to resolve

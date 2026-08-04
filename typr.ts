@@ -1231,7 +1231,9 @@ Use replace only for a rule that must change, remove only when explicitly contra
     format: z.toJSONSchema(profileOperationsSchema),
     stream: false as const,
     think: false as const,
-    keep_alive: -1,
+    // The profile model occupies ~23 GB and commands are rare. Unload it
+    // immediately while keeping the 3 GB dictation model resident.
+    keep_alive: 0,
     options: { temperature: 0, num_ctx: 4_096, num_predict: 384 },
   };
 }
@@ -1243,41 +1245,50 @@ async function requestProfileOperations(
   rawResponse: string;
   timing: z.infer<typeof modelTimingSchema>;
 }> {
-  await ensureOllama(await loadSettings(), false);
-  const response = await fetch(`${OLLAMA_URL}/api/generate`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(request),
-  });
-  const body = await response.json().catch(() => null);
-  if (!response.ok) {
-    throw new Error(
-      `Qwen profile update failed with HTTP ${response.status}`,
+  const settings = await loadSettings();
+  await ensureOllama(settings, false);
+  try {
+    const response = await fetch(`${OLLAMA_URL}/api/generate`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(request),
+    });
+    const body = await response.json().catch(() => null);
+    if (!response.ok) {
+      throw new Error(
+        `Qwen profile update failed with HTTP ${response.status}`,
+      );
+    }
+    const parsedResponse = ollamaResponseSchema.parse(body);
+    return {
+      operations: profileOperationsSchema.parse(
+        JSON.parse(parsedResponse.response),
+      ),
+      rawResponse: parsedResponse.response,
+      timing: modelTimingSchema.parse({
+        totalMs: Math.round(parsedResponse.total_duration / 1_000_000),
+        loadMs: Math.round(parsedResponse.load_duration / 1_000_000),
+        promptEvalMs: Math.round(
+          parsedResponse.prompt_eval_duration / 1_000_000,
+        ),
+        generationMs: Math.round(parsedResponse.eval_duration / 1_000_000),
+        promptTokens: parsedResponse.prompt_eval_count,
+        outputTokens: parsedResponse.eval_count,
+        tokensPerSecond: parsedResponse.eval_duration > 0
+          ? Math.round(
+            (parsedResponse.eval_count /
+              (parsedResponse.eval_duration / 1_000_000_000)) * 10,
+          ) / 10
+          : 0,
+      }),
+    };
+  } finally {
+    // Loading the profile model evicts the latency-sensitive dictation model
+    // on unified memory, so restore the small resident model before exiting.
+    await ensureOllama(settings, true).catch((error) =>
+      logToFile("ERROR", "Could not restore the dictation model", error)
     );
   }
-  const parsedResponse = ollamaResponseSchema.parse(body);
-  return {
-    operations: profileOperationsSchema.parse(
-      JSON.parse(parsedResponse.response),
-    ),
-    rawResponse: parsedResponse.response,
-    timing: modelTimingSchema.parse({
-      totalMs: Math.round(parsedResponse.total_duration / 1_000_000),
-      loadMs: Math.round(parsedResponse.load_duration / 1_000_000),
-      promptEvalMs: Math.round(
-        parsedResponse.prompt_eval_duration / 1_000_000,
-      ),
-      generationMs: Math.round(parsedResponse.eval_duration / 1_000_000),
-      promptTokens: parsedResponse.prompt_eval_count,
-      outputTokens: parsedResponse.eval_count,
-      tokensPerSecond: parsedResponse.eval_duration > 0
-        ? Math.round(
-          (parsedResponse.eval_count /
-            (parsedResponse.eval_duration / 1_000_000_000)) * 10,
-        ) / 10
-        : 0,
-    }),
-  };
 }
 
 async function processProfileFeedback(): Promise<void> {
