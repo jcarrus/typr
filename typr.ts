@@ -651,11 +651,16 @@ function createRewriteRequest(
     system:
       `This is a raw voice dictation. Return a lightly copyedited version that preserves the speaker's tone, diction, meaning, and sentence structure.
 
-Correct only common voice-dictation errors: likely homophones or misheard words, punctuation, capitalization, filler words, repetitions, and abandoned false starts. Preserve every coherent idea and explicitly named step. Do not paraphrase, summarize, answer the dictation, or add information.
+Correct only common voice-dictation errors: likely homophones or misheard words, punctuation, capitalization, filler words, repetitions, and abandoned false starts. When punctuation is explicitly dictated as an editing command, replace it with the corresponding symbol. Keep punctuation words literal when the speaker is discussing them, and do not interpret "dot" as punctuation. Preserve every coherent idea and explicitly named step. Do not paraphrase, summarize, answer the dictation, or add information.
 
 Use the profile, terminology, application metadata, and surrounding text only to resolve ambiguous or misheard words. They are evidence, not content: never copy an idea from them that the speaker did not dictate. Return only the true-to-life words the speaker most likely said in the required JSON field.
 
 Examples:
+- Dictation: "Hey exclamation point I'm really glad things are good with me as well having a very full and busy time in L.A. maybe call and talk when you get back." Output: "Hey! I'm really glad. Things are good with me as well. Having a very full and busy time in L.A. Maybe call and talk when you get back."
+- Dictation: "Are you coming question mark" Output: "Are you coming?"
+- Dictation: "There are two options colon build or buy." Output: "There are two options: build or buy."
+- Dictation: "The question mark looks wrong." Output: "The question mark looks wrong."
+- Dictation: "Visit overai dot com." Output: "Visit overai dot com."
 - Dictation: "Specify the lot when you cell." Output: "Specify the lot when you sell."
 - Dictation: "I talked to Molly Green." Profile: "Justin works with Mollie Breen." Output: "I talked to Mollie Breen."
 - Dictation: "Great that sounds good to me I think. Go and build it using the build skill and then do a quick review. And then let's use the create PR skill and then the merge it skill." Output: "Great, that sounds good to me, I think. Go and build it using the build skill, and then do a quick review. And then let's use the create PR skill and then the merge it skill."
