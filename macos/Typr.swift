@@ -61,6 +61,7 @@ private struct CaptureDiagnostics: Encodable {
 private struct MoonshineStreamingResult {
     let transcript: String?
     let finalizeMs: Int
+    let endpointPaddingMs: Int
     let error: String?
 }
 
@@ -73,6 +74,7 @@ private final class MoonshineStreamingSession {
     private let stream: MoonshineVoice.Stream
     private var lines: [UInt64: (startTime: Float, text: String)] = [:]
     private var error: String?
+    private var sampleRate: Int32 = 16_000
 
     init(transcriber: Transcriber, queue: DispatchQueue) throws {
         self.queue = queue
@@ -103,6 +105,7 @@ private final class MoonshineStreamingSession {
                 return
             }
             do {
+                self.sampleRate = sampleRate
                 try stream.addAudio(audio, sampleRate: sampleRate)
             } catch {
                 self.error = error.localizedDescription
@@ -113,6 +116,21 @@ private final class MoonshineStreamingSession {
     func stop() -> MoonshineStreamingResult {
         queue.sync {
             let startedAt = ProcessInfo.processInfo.systemUptime
+            let endpointPaddingMs = 250
+            // Stop flushes buffered samples but cannot infer an utterance boundary
+            // when speech reaches the final sample. Decoder-only silence supplies
+            // that boundary without extending the saved recording or wall-clock wait.
+            do {
+                try stream.addAudio(
+                    [Float](
+                        repeating: 0,
+                        count: Int(sampleRate) * endpointPaddingMs / 1_000
+                    ),
+                    sampleRate: sampleRate
+                )
+            } catch {
+                self.error = error.localizedDescription
+            }
             do {
                 try stream.stop()
             } catch {
@@ -129,6 +147,7 @@ private final class MoonshineStreamingSession {
                 finalizeMs: Int(
                     (ProcessInfo.processInfo.systemUptime - startedAt) * 1_000
                 ),
+                endpointPaddingMs: endpointPaddingMs,
                 error: self.error
             )
         }
@@ -1784,6 +1803,9 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate
                 environment["TYPR_MOONSHINE_TRANSCRIPT_PATH"] = transcriptURL.path
                 environment["TYPR_MOONSHINE_FINALIZE_MS"] = String(
                     streamingResult?.finalizeMs ?? 0
+                )
+                environment["TYPR_MOONSHINE_ENDPOINT_PADDING_MS"] = String(
+                    streamingResult?.endpointPaddingMs ?? 0
                 )
             } catch {
                 // The post-stop Moonshine CLI remains a safe fallback.

@@ -150,6 +150,7 @@ const runMetadataSchema = z.object({
   rewriteMs: z.number().optional(),
   rewriteTiming: modelTimingSchema.optional(),
   moonshineTranscriptionMs: z.number().optional(),
+  moonshineEndpointPaddingMs: z.number().optional(),
   moonshineRewriteMs: z.number().optional(),
   moonshineRewriteTiming: modelTimingSchema.optional(),
   whisperKitTranscriptionMs: z.number().optional(),
@@ -1154,6 +1155,9 @@ async function processDictation(): Promise<void> {
   const id = Deno.env.get("TYPR_RUN_ID");
   const nativeAudioPath = Deno.env.get("TYPR_AUDIO_PATH");
   const recordingMs = Number.parseInt(Deno.env.get("TYPR_RECORDING_MS") ?? "");
+  const moonshineEndpointPaddingMs = Number.parseInt(
+    Deno.env.get("TYPR_MOONSHINE_ENDPOINT_PADDING_MS") ?? "",
+  );
   if (!id || !nativeAudioPath || !Number.isFinite(recordingMs)) {
     throw new Error("Native recording metadata is incomplete");
   }
@@ -1169,6 +1173,9 @@ async function processDictation(): Promise<void> {
     status: recordingMs < 1_000 ? "too-short" : "processing",
     kind: "dictation",
     recordingMs,
+    moonshineEndpointPaddingMs: Number.isFinite(moonshineEndpointPaddingMs)
+      ? moonshineEndpointPaddingMs
+      : undefined,
   };
   await writeRunMetadata(directory, metadata);
   if (recordingMs < 1_000) {
