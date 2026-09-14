@@ -326,12 +326,12 @@ private enum Accessibility {
                 return (nil, copyAttribute(element, kAXSelectedTextAttribute), nil)
             }
             return (
-                String(text.substring(to: selection.location).suffix(1_000)),
+                String(text.substring(to: selection.location).suffix(5_000)),
                 text.substring(with: NSRange(
                     location: selection.location,
                     length: selection.length
                 )),
-                String(text.substring(from: selection.location + selection.length).prefix(1_000))
+                String(text.substring(from: selection.location + selection.length).prefix(5_000))
             )
         }()
 
@@ -339,16 +339,16 @@ private enum Accessibility {
             if usesTerminalTextContext {
                 // Terminal Accessibility caret ranges commonly remain at zero
                 // while tmux redraws. The buffer tail reflects the active pane.
-                return value.map { String($0.suffix(4_000)) }
+                return value.map { String($0.suffix(10_000)) }
             }
             guard nearbyText.before == nil, nearbyText.after == nil else {
                 return nil
             }
             if let visibleRange = rangeAttribute(element, kAXVisibleCharacterRangeAttribute),
                let text = string(element, for: visibleRange) {
-                return String(text.suffix(2_000))
+                return String(text.suffix(10_000))
             }
-            return value.map { String($0.suffix(2_000)) }
+            return value.map { String($0.suffix(10_000)) }
         }()
 
         return AppContext(
@@ -1231,6 +1231,57 @@ private final class HistoryStore: NSObject, ObservableObject, AVAudioPlayerDeleg
     }
 }
 
+private struct CopyTextButton: View {
+    let text: String?
+    let subject: String
+    @State private var copied = false
+
+    var body: some View {
+        Button {
+            guard let text, !text.isEmpty else { return }
+            NSPasteboard.general.clearContents()
+            copied = NSPasteboard.general.setString(text, forType: .string)
+        } label: {
+            Label(copied ? "Copied" : "Copy", systemImage: copied ? "checkmark" : "doc.on.doc")
+        }
+        .controlSize(.small)
+        .disabled(text?.isEmpty != false)
+        .help("Copy \(subject.lowercased())")
+        .accessibilityLabel(copied ? "\(subject) copied" : "Copy \(subject.lowercased())")
+        .task(id: copied) {
+            guard copied else { return }
+            do {
+                try await Task.sleep(for: .seconds(2))
+                copied = false
+            } catch {}
+        }
+        .onChange(of: text) { copied = false }
+    }
+}
+
+private struct CopyableTextBox: View {
+    let title: String
+    let text: String?
+    var placeholder = "Unavailable"
+    var monospaced = false
+
+    var body: some View {
+        GroupBox {
+            Text(text ?? placeholder)
+                .font(monospaced ? .system(.body, design: .monospaced) : .body)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .textSelection(.enabled)
+                .padding(4)
+        } label: {
+            HStack {
+                Text(title)
+                Spacer()
+                CopyTextButton(text: text, subject: title)
+            }
+        }
+    }
+}
+
 private struct HistoryView: View {
     @StateObject private var store = HistoryStore()
 
@@ -1301,44 +1352,20 @@ private struct HistoryView: View {
                            let whisperKitOutput = run.whisperKitOutput {
                             HStack(alignment: .top, spacing: 16) {
                                 VStack(alignment: .leading, spacing: 12) {
-                                    GroupBox(
-                                        run.metadata.transcriptionModel == "medium-streaming-en"
+                                    CopyableTextBox(title: run.metadata.transcriptionModel == "medium-streaming-en"
                                             ? "Moonshine raw · typed path"
-                                            : "Moonshine raw"
-                                    ) {
-                                        Text(moonshineTranscript)
-                                            .frame(maxWidth: .infinity, alignment: .leading)
-                                            .textSelection(.enabled)
-                                            .padding(4)
-                                    }
-                                    GroupBox("Moonshine rewritten") {
-                                        Text(moonshineOutput)
-                                            .frame(maxWidth: .infinity, alignment: .leading)
-                                            .textSelection(.enabled)
-                                            .padding(4)
-                                    }
+                                            : "Moonshine raw", text: moonshineTranscript)
+                                    CopyableTextBox(title: "Moonshine rewritten", text: moonshineOutput)
                                     if let timing = run.metadata.moonshineRewriteTiming {
                                         ModelTimingView(timing: timing)
                                     }
                                 }
                                 .frame(maxWidth: .infinity, alignment: .leading)
                                 VStack(alignment: .leading, spacing: 12) {
-                                    GroupBox(
-                                        run.metadata.transcriptionModel == "medium-streaming-en"
+                                    CopyableTextBox(title: run.metadata.transcriptionModel == "medium-streaming-en"
                                             ? "WhisperKit raw"
-                                            : "WhisperKit raw · typed path"
-                                    ) {
-                                        Text(whisperKitTranscript)
-                                            .frame(maxWidth: .infinity, alignment: .leading)
-                                            .textSelection(.enabled)
-                                            .padding(4)
-                                    }
-                                    GroupBox("WhisperKit rewritten") {
-                                        Text(whisperKitOutput)
-                                            .frame(maxWidth: .infinity, alignment: .leading)
-                                            .textSelection(.enabled)
-                                            .padding(4)
-                                    }
+                                            : "WhisperKit raw · typed path", text: whisperKitTranscript)
+                                    CopyableTextBox(title: "WhisperKit rewritten", text: whisperKitOutput)
                                     if let timing = run.metadata.whisperKitRewriteTiming {
                                         ModelTimingView(timing: timing)
                                     }
@@ -1346,18 +1373,8 @@ private struct HistoryView: View {
                                 .frame(maxWidth: .infinity, alignment: .leading)
                             }
                         } else {
-                            GroupBox("Raw transcript") {
-                                Text(run.transcript ?? "No transcript")
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-                                    .textSelection(.enabled)
-                                    .padding(4)
-                            }
-                            GroupBox("Cleaned output") {
-                                Text(run.output ?? run.metadata.error ?? "No output")
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-                                    .textSelection(.enabled)
-                                    .padding(4)
-                            }
+                            CopyableTextBox(title: "Raw transcript", text: run.transcript, placeholder: "No transcript")
+                            CopyableTextBox(title: "Cleaned output", text: run.output, placeholder: run.metadata.error ?? "No output")
                             if let timing = run.metadata.rewriteTiming {
                                 ModelTimingView(timing: timing)
                             }
@@ -1371,20 +1388,14 @@ private struct HistoryView: View {
 
                         if let capture = run.capture {
                             DisclosureGroup("Capture diagnostics") {
-                                Text(capture)
-                                    .font(.system(.body, design: .monospaced))
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-                                    .textSelection(.enabled)
+                                CopyableTextBox(title: "Capture diagnostics", text: capture, monospaced: true)
                                     .padding(.top, 8)
                             }
                         }
 
                         if let profileUpdate = run.profileUpdate {
                             DisclosureGroup("Profile operations") {
-                                Text(profileUpdate)
-                                    .font(.system(.body, design: .monospaced))
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-                                    .textSelection(.enabled)
+                                CopyableTextBox(title: "Profile operations", text: profileUpdate, monospaced: true)
                                     .padding(.top, 8)
                             }
                         }
@@ -1395,26 +1406,10 @@ private struct HistoryView: View {
                                     Text("Model: \(request.model)")
                                         .font(.caption)
                                         .foregroundStyle(.secondary)
-                                    GroupBox("System prompt") {
-                                        Text(request.system)
-                                            .frame(maxWidth: .infinity, alignment: .leading)
-                                            .textSelection(.enabled)
-                                            .padding(4)
-                                    }
-                                    GroupBox("User prompt and page context") {
-                                        Text(request.prompt)
-                                            .frame(maxWidth: .infinity, alignment: .leading)
-                                            .textSelection(.enabled)
-                                            .padding(4)
-                                    }
+                                    CopyableTextBox(title: "System prompt", text: request.system)
+                                    CopyableTextBox(title: "User prompt and page context", text: request.prompt)
                                     if let context = run.context {
-                                        GroupBox("Raw Accessibility context") {
-                                            Text(context)
-                                                .font(.system(.body, design: .monospaced))
-                                                .frame(maxWidth: .infinity, alignment: .leading)
-                                                .textSelection(.enabled)
-                                                .padding(4)
-                                        }
+                                        CopyableTextBox(title: "Raw Accessibility context", text: context, monospaced: true)
                                     }
                                 }
                                 .padding(.top, 8)
@@ -1435,12 +1430,7 @@ private struct HistoryView: View {
                         }
 
                         ForEach(Array(run.alternatives.enumerated()), id: \.offset) { _, alternate in
-                            GroupBox(alternate.name) {
-                                Text(alternate.text)
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-                                    .textSelection(.enabled)
-                                    .padding(4)
-                            }
+                            CopyableTextBox(title: alternate.name, text: alternate.text)
                         }
                     }
                     .padding(20)

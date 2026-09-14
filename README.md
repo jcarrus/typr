@@ -56,8 +56,12 @@ an Apple Development certificate before building on another Mac.
 
 Hold Fn/Globe to record. The menu-bar icon turns green immediately while
 recording, yellow while processing, and returns to its normal color when done.
-Typr loads Moonshine in-process and keeps Qwen resident in Ollama while the app
-runs. Their first launch can take longer while models download and load.
+Typr loads Moonshine in-process. Qwen unloads after one hour without a request;
+the next dictation reloads it. When Typr starts Ollama, it limits the runner's
+host prompt cache to 1 GiB (`LLAMA_ARG_CACHE_RAM`, overridable in the environment).
+An independently started Ollama server needs that setting in its own environment.
+Model weights and the active context use additional memory. Their first launch
+can take longer while models download and load.
 
 Click the menu-bar icon and choose a result under **Recent Dictations** to copy
 it. Choose **Dictation History…** to compare the untouched
